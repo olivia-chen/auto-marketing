@@ -175,7 +175,7 @@ export async function listWixServices(
 }
 
 /**
- * Query COURSE-type services that have future sessions.
+ * Query COURSE and CLASS type services that have sessions in range.
  * Uses service schedule metadata (firstSessionStart/lastSessionEnd)
  * instead of the Calendar API which returns stale session records.
  */
@@ -183,35 +183,44 @@ export async function queryFutureCourses(
   options: WixApiOptions,
   fromDate: string
 ): Promise<WixService[]> {
-  try {
-    let allCourses: WixService[] = [];
-    let offset = 0;
-    let hasNext = true;
-    while (hasNext) {
-      const data = await wixFetch('/bookings/v2/services/query', options, {
-        query: {
-          filter: { type: 'COURSE' },
-          paging: { limit: 100, offset },
-        },
-      });
-      const services: WixService[] = data.services || [];
-      allCourses = allCourses.concat(services);
-      hasNext = data.pagingMetadata?.hasNext || false;
-      offset += services.length;
-      if (services.length === 0) break;
-    }
+  const serviceTypes = ['COURSE', 'CLASS'];
 
-    // Filter to courses with future sessions
-    const fromTimestamp = new Date(`${fromDate}T00:00:00.000Z`).getTime();
-    return allCourses.filter((s) => {
-      const lastEnd = s.schedule?.lastSessionEnd;
-      if (!lastEnd) return false;
-      return new Date(lastEnd).getTime() >= fromTimestamp;
-    });
-  } catch (error) {
-    console.error('Error querying future courses:', error);
-    return [];
+  async function fetchByType(type: string): Promise<WixService[]> {
+    try {
+      let all: WixService[] = [];
+      let offset = 0;
+      let hasNext = true;
+      while (hasNext) {
+        const data = await wixFetch('/bookings/v2/services/query', options, {
+          query: {
+            filter: { type },
+            paging: { limit: 100, offset },
+          },
+        });
+        const services: WixService[] = data.services || [];
+        all = all.concat(services);
+        hasNext = data.pagingMetadata?.hasNext || false;
+        offset += services.length;
+        if (services.length === 0) break;
+      }
+      return all;
+    } catch (error) {
+      console.error(`Error querying ${type} services:`, error);
+      return [];
+    }
   }
+
+  // Fetch COURSE and CLASS in parallel
+  const results = await Promise.all(serviceTypes.map(fetchByType));
+  const allServices = results.flat();
+
+  // Filter to services with sessions in range
+  const fromTimestamp = new Date(`${fromDate}T00:00:00.000Z`).getTime();
+  return allServices.filter((s) => {
+    const lastEnd = s.schedule?.lastSessionEnd;
+    if (!lastEnd) return false;
+    return new Date(lastEnd).getTime() >= fromTimestamp;
+  });
 }
 
 /**

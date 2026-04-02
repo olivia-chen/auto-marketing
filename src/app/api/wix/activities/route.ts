@@ -46,47 +46,79 @@ export async function GET(req: NextRequest) {
     return String(val);
   };
 
+  /**
+   * Resolve a Wix media reference to a full CDN URL.
+   * Wix returns image URLs in several formats:
+   *   - "wix:image://v1/<mediaId>/<originalFilename>#..."  (URI scheme)
+   *   - "<mediaId>"  (bare filename like "abc123~mv2.jpeg")
+   *   - full https URL (already usable)
+   */
+  const resolveWixImageUrl = (raw: string | undefined): string | undefined => {
+    if (!raw) return undefined;
+    // Already a full URL
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    // Wix URI scheme: wix:image://v1/<mediaId>/<originalFilename>#originWidth=...&originHeight=...
+    if (raw.startsWith('wix:image://')) {
+      const parts = raw.replace('wix:image://v1/', '').split('/');
+      const mediaId = parts[0];
+      if (mediaId) return `https://static.wixstatic.com/media/${mediaId}`;
+    }
+    // Bare filename — prefix with CDN base
+    return `https://static.wixstatic.com/media/${raw}`;
+  };
+
   try {
-    // Fetch future COURSE services (these are the bookings you care about)
-    const futureCourses = await queryFutureCourses(options, fromDate);
+    // Fetch COURSE and CLASS services from Wix Bookings
+    const services = await queryFutureCourses(options, fromDate);
 
     const activities: Activity[] = [];
 
-    // Convert COURSE services to Activities using schedule metadata
-    for (const course of futureCourses) {
-      const startDate = course.schedule?.firstSessionStart;
+    // Convert services to Activities using schedule metadata
+    for (const service of services) {
+      const startDate = service.schedule?.firstSessionStart;
       if (!startDate) continue;
 
+      // Map Wix service type → internal CampaignType
+      const serviceType = (service as any).type;
+      const campaignType = serviceType === 'CLASS' ? 'class' : 'workshop';
+
       activities.push({
-        id: course.id || uuidv4(),
-        title: str(course.name) || 'Untitled Course',
-        description: str(course.description),
+        id: service.id || uuidv4(),
+        title: str(service.name) || `Untitled ${serviceType === 'CLASS' ? 'Class' : 'Course'}`,
+        description: str(service.description),
         startDate,
-        endDate: course.schedule?.lastSessionEnd || undefined,
-        location: undefined, // Services don't have location at top level
-        imageUrl: course.media?.mainMedia?.image?.url,
+        endDate: service.schedule?.lastSessionEnd || undefined,
+        location: undefined,
+        imageUrl: resolveWixImageUrl(service.media?.mainMedia?.image?.url),
         sourceUrl:
-          course.urls?.bookingPageUrl ||
-          course.urls?.servicePage?.url,
+          service.urls?.bookingPageUrl ||
+          service.urls?.servicePage?.url,
         source: 'wix-booking',
-        type: 'class',
+        type: campaignType,
         selected: false,
       });
     }
 
+    // Exclude recurring/drop-in activities that don't need marketing
+    const excludePrefixes = ['online', 'drop in'];
+    const filtered = activities.filter((a) => {
+      const lower = a.title.toLowerCase();
+      return !excludePrefixes.some((prefix) => lower.startsWith(prefix));
+    });
+
     // Sort by start date (first session)
-    activities.sort(
+    filtered.sort(
       (a, b) =>
         new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
     );
 
     return NextResponse.json({
-      activities,
+      activities: filtered,
       meta: {
         fromDate,
         toDate,
-        courseCount: futureCourses.length,
-        totalActivities: activities.length,
+        serviceCount: services.length,
+        totalActivities: filtered.length,
       },
     });
   } catch (error: any) {

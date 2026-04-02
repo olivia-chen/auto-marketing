@@ -113,8 +113,7 @@ export function generateSchedule(
         postDate = eventDate;
       }
 
-      // Snap to weekday (Mon-Fri only)
-      postDate = snapToWeekday(postDate);
+      // Posts can land on any day including weekends
 
       const postDateStart = startOfDay(postDate);
 
@@ -216,6 +215,12 @@ export function applyPlatformCaps(
       continue;
     }
 
+    // Recap posts are exempt from caps — they should always go to all platforms
+    if (post.angle === 'recap') {
+      result.push(post);
+      continue;
+    }
+
     // Filter platforms that haven't exceeded their cap
     const filteredPlatforms = post.platforms.filter((platform) => {
       return platformCounts[platform] < PLATFORM_WEEKLY_CAPS[platform];
@@ -255,7 +260,7 @@ export interface DaySchedule {
 }
 
 /**
- * Group ScheduledPosts into a Mon-Fri grid structure.
+ * Group ScheduledPosts into a Mon-Sun grid structure (7 days).
  */
 export function groupByDay(
   posts: ScheduledPost[],
@@ -265,22 +270,18 @@ export function groupByDay(
   const days = eachDayOfInterval({ start: weekStart, end: weekEnd });
   const today = startOfDay(new Date());
 
-  return days
-    .filter((d) => {
-      const day = getDay(d);
-      return day >= 1 && day <= 5; // Mon-Fri only
-    })
-    .map((date) => {
-      const dateStr = format(date, 'yyyy-MM-dd');
-      return {
-        date,
-        dateStr,
-        dayName: format(date, 'EEE'),
-        dayNumber: format(date, 'd'),
-        monthDay: format(date, 'MMM d'),
-        posts: posts.filter((p) => p.postDate === dateStr),
-        isToday: isSameDay(date, today),
-        isWeekend: false,
-      };
-    });
+  return days.map((date) => {
+    const day = getDay(date);
+    const dateStr = format(date, 'yyyy-MM-dd');
+    return {
+      date,
+      dateStr,
+      dayName: format(date, 'EEE'),
+      dayNumber: format(date, 'd'),
+      monthDay: format(date, 'MMM d'),
+      posts: posts.filter((p) => p.postDate === dateStr),
+      isToday: isSameDay(date, today),
+      isWeekend: day === 0 || day === 6,
+    };
+  });
 }

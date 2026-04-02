@@ -45,6 +45,30 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+
+  /* ── TJCF Brand: Jade Teal ── built around logo-extracted #20a89e */
+  --color-teal-50:  #eefbf9;
+  --color-teal-100: #d0f5ef;
+  --color-teal-200: #a4ebe0;
+  --color-teal-300: #6cdbc9;
+  --color-teal-400: #38c4af;
+  --color-teal-500: #20a89e;
+  --color-teal-600: #178a80;
+  --color-teal-700: #166f66;
+  --color-teal-800: #155952;
+  --color-teal-900: #154a44;
+
+  /* ── TJCF Brand: Lotus Rose ── built around logo-extracted #e84882 */
+  --color-rose-50:  #fff0f5;
+  --color-rose-100: #ffe0ec;
+  --color-rose-200: #ffc2d9;
+  --color-rose-300: #ff8db8;
+  --color-rose-400: #f84d91;
+  --color-rose-500: #e84882;
+  --color-rose-600: #d41067;
+  --color-rose-700: #b30c54;
+  --color-rose-800: #940e47;
+  --color-rose-900: #7c1040;
 }
 
 :root {

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useSession, signOut } from 'next-auth/react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,7 +26,6 @@ import {
   FileText,
   Send,
   Loader2,
-  Key,
   Copy,
   Check,
   Plus,
@@ -50,6 +50,7 @@ import {
   ChevronUp,
   Table2,
   Share2,
+  LogOut,
 } from 'lucide-react';
 import {
   Activity,
@@ -100,6 +101,28 @@ function formatActivityDate(dateStr: string | any) {
   }
 }
 
+/** Resolve Wix image:// URIs to real URLs */
+function resolveWixImageUrl(url?: string | null): string {
+  if (!url) return '';
+  if (url.startsWith('image://')) {
+    const parts = url.replace('image://v1/', '').split('/');
+    return `https://static.wixstatic.com/media/${parts[0]}`;
+  }
+  if (url.startsWith('wix:image://')) {
+    const match = url.match(/wix:image:\/\/v1\/([^/]+)/);
+    if (match) return `https://static.wixstatic.com/media/${match[1]}`;
+  }
+  return url;
+}
+
+type DriveFileInfo = {
+  id: string; name: string; mimeType: string;
+  thumbnailUrl: string | null; viewUrl: string | null;
+  downloadUrl: string | null; size: number; createdAt: string;
+  isImage: boolean; isVideo: boolean;
+};
+type DriveFolderInfo = { folderId: string; folderUrl: string; folderName: string; path: string };
+
 function getSourceBadge(source: Activity['source']) {
   switch (source) {
     case 'wix-event':
@@ -114,8 +137,11 @@ function getSourceBadge(source: Activity['source']) {
 // ─── Main Component ───────────────────────────────────────────────
 
 export default function Home() {
+  const { data: session } = useSession();
+
   // API key
-  const [apiKey, setApiKey] = useState('');
+  // Server-side AI provider availability
+  const [serverAiStatus, setServerAiStatus] = useState<{ gemini: boolean; openai: boolean }>({ gemini: false, openai: false });
 
   // Week navigation
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -143,12 +169,34 @@ export default function Home() {
 
   // Generation state
   const [generatingPostId, setGeneratingPostId] = useState<string | null>(null);
+  const [generatingPlatform, setGeneratingPlatform] = useState<string | null>(null); // tracks which platform is generating
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('schedule');
   const [copiedTab, setCopiedTab] = useState<string | null>(null);
 
+  // Review modal state
+  const [reviewModal, setReviewModal] = useState<{
+    open: boolean;
+    postTitle: string;
+    platformId: string;
+    platformTitle: string;
+    platformEmoji: string;
+    content: string;
+  } | null>(null);
+
+  // Preset system prompts
+  const [promptPresets, setPromptPresets] = useState<{ name: string; prompt: string }[]>([]);
+  const [showPresetEditor, setShowPresetEditor] = useState(false);
+  const [newPresetName, setNewPresetName] = useState('');
+  const [newPresetPrompt, setNewPresetPrompt] = useState('');
+
   // Expanded post detail
   const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
+
+  // AI Settings
+  const [aiProvider, setAiProvider] = useState<'gemini' | 'openai'>('gemini');
+  const [brandContext, setBrandContext] = useState('');
+  const [showAiSettings, setShowAiSettings] = useState(false);
 
   // Context panel for activities
   const [contextPanelId, setContextPanelId] = useState<string | null>(null);
@@ -176,15 +224,166 @@ export default function Home() {
   const [draggedPost, setDraggedPost] = useState<ScheduledPost | null>(null);
   const [dragOverDay, setDragOverDay] = useState<string | null>(null);
 
-  // Load API key from localStorage
+  // Google Drive media state
+  const [driveFolders, setDriveFolders] = useState<Record<string, DriveFolderInfo>>({});
+  const [driveFiles, setDriveFiles] = useState<Record<string, DriveFileInfo[]>>({});
+  const [loadingDriveFolder, setLoadingDriveFolder] = useState<string | null>(null);
+  const [loadingDriveFiles, setLoadingDriveFiles] = useState<string | null>(null);
+
+  // Wix blog publish state
+  const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
+  const [publishedPosts, setPublishedPosts] = useState<Record<string, { url: string }>>({});
+
+  // Load AI settings from localStorage + fetch server-side provider status
   useEffect(() => {
-    const savedKey = localStorage.getItem('gemini_api_key');
-    if (savedKey) setApiKey(savedKey);
+    const savedProvider = localStorage.getItem('ai_provider') as 'gemini' | 'openai' | null;
+    if (savedProvider) setAiProvider(savedProvider);
+    const savedBrand = localStorage.getItem('brand_context');
+    if (savedBrand) setBrandContext(savedBrand);
+
+    // Load saved prompt presets
+    const savedPresets = localStorage.getItem('prompt_presets');
+    if (savedPresets) {
+      try { setPromptPresets(JSON.parse(savedPresets)); } catch {}
+    } else {
+      // Default presets for TJCF
+      const defaults = [
+        { name: '🌿 TJCF Default', prompt: 'Write in a warm, community-focused tone. The Joy Culture Foundation promotes wellness, culture, and community through events and programs. Use emojis sparingly. Be inclusive and welcoming.' },
+        { name: '🎉 Event Promo', prompt: 'Write exciting, energetic promotional copy. Focus on what attendees will experience and gain. Use action-oriented language. Include clear calls-to-action with registration details.' },
+        { name: '📸 Event Recap', prompt: 'Write a grateful, celebratory recap. Highlight community impact, key moments, and participant experiences. Thank attendees and volunteers. Mention upcoming events.' },
+        { name: '📢 Announcement', prompt: 'Write a clear, professional announcement. Lead with the most important information. Keep it concise but complete. Use a friendly yet authoritative tone.' },
+      ];
+      setPromptPresets(defaults);
+      localStorage.setItem('prompt_presets', JSON.stringify(defaults));
+    }
+
+    // Fetch which AI providers have server-side keys configured
+    fetch('/api/ai/status')
+      .then((r) => r.json())
+      .then((status) => {
+        setServerAiStatus(status);
+        if (savedProvider === 'openai' && !status.openai && status.gemini) {
+          setAiProvider('gemini');
+        } else if (savedProvider === 'gemini' && !status.gemini && status.openai) {
+          setAiProvider('openai');
+        }
+      })
+      .catch(() => {});
   }, []);
 
-  const handleApiKeyChange = (val: string) => {
-    setApiKey(val);
-    localStorage.setItem('gemini_api_key', val);
+  const handleProviderChange = (val: 'gemini' | 'openai') => {
+    setAiProvider(val);
+    localStorage.setItem('ai_provider', val);
+  };
+
+  const handleBrandContextChange = (val: string) => {
+    setBrandContext(val);
+    localStorage.setItem('brand_context', val);
+  };
+
+  // Preset prompt management
+  const savePreset = () => {
+    if (!newPresetName.trim() || !newPresetPrompt.trim()) return;
+    const updated = [...promptPresets, { name: newPresetName.trim(), prompt: newPresetPrompt.trim() }];
+    setPromptPresets(updated);
+    localStorage.setItem('prompt_presets', JSON.stringify(updated));
+    setNewPresetName('');
+    setNewPresetPrompt('');
+    setShowPresetEditor(false);
+  };
+
+  const deletePreset = (index: number) => {
+    const updated = promptPresets.filter((_, i) => i !== index);
+    setPromptPresets(updated);
+    localStorage.setItem('prompt_presets', JSON.stringify(updated));
+  };
+
+  const applyPreset = (prompt: string) => {
+    handleBrandContextChange(prompt);
+  };
+
+  // ─── Per-Platform Generation ───────────────────────────────────
+  const handleGeneratePlatform = async (post: ScheduledPost, platformId: PlatformId) => {
+    const providerAvailable = aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini;
+    if (!providerAvailable) {
+      setError(`${aiProvider === 'openai' ? 'OpenAI' : 'Gemini'} is not configured on the server. Contact your administrator.`);
+      return;
+    }
+    if (!post.activity) {
+      setError('Activity data not found for this post.');
+      return;
+    }
+
+    setGeneratingPostId(post.id);
+    setGeneratingPlatform(platformId);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: aiProvider,
+          activities: [post.activity],
+          campaignType: post.activityType,
+          angle: post.angle,
+          link: post.activity.sourceUrl || '',
+          imageBase64: post.activity.mediaBase64,
+          notes: post.activity.notes || '',
+          platforms: [platformId],
+          contextMedia: post.activity.contextMedia || [],
+          contextLinks: post.activity.contextLinks || [],
+          contextNotes: post.activity.contextNotes || '',
+          brandContext: brandContext || undefined,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to generate');
+
+      // Merge into existing generatedContent (keep other platforms)
+      setScheduledPosts((prev) =>
+        prev.map((p) =>
+          p.id === post.id
+            ? {
+                ...p,
+                generatedContent: { ...(p.generatedContent || {}), ...data },
+                status: 'needs_review' as ApprovalStatus,
+              }
+            : p
+        )
+      );
+      setExpandedPostId(post.id);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setGeneratingPostId(null);
+      setGeneratingPlatform(null);
+    }
+  };
+
+  // Open review modal for a platform's content
+  const openReviewModal = (post: ScheduledPost, platformId: PlatformId) => {
+    const platform = PLATFORMS.find((p) => p.id === platformId);
+    if (!platform) return;
+    const content = post.generatedContent?.[platformId as keyof typeof post.generatedContent];
+    if (!content) return;
+
+    const isEmail = platformId === 'email';
+    const displayText = isEmail
+      ? typeof content === 'object'
+        ? `Subject: ${(content as any).subject}\n\n${(content as any).body}`
+        : String(content)
+      : String(content);
+
+    setReviewModal({
+      open: true,
+      postTitle: post.activity?.title || 'Post',
+      platformId,
+      platformTitle: platform.title,
+      platformEmoji: platform.emoji,
+      content: displayText,
+    });
   };
 
   // Fetch activities from Wix — pull future month so T-14/T-7 posts land on current weeks
@@ -468,8 +667,9 @@ export default function Home() {
 
   // ─── Per-Post Generation ─────────────────────────────────────
   const handleGeneratePost = async (post: ScheduledPost) => {
-    if (!apiKey) {
-      setError('Please enter your Gemini API Key in the field at the top of the page before generating content.');
+    const providerAvailable = aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini;
+    if (!providerAvailable) {
+      setError(`${aiProvider === 'openai' ? 'OpenAI' : 'Gemini'} is not configured on the server. Contact your administrator.`);
       return;
     }
 
@@ -486,7 +686,7 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          apiKey,
+          provider: aiProvider,
           activities: [post.activity],
           campaignType: post.activityType,
           angle: post.angle,
@@ -497,6 +697,7 @@ export default function Home() {
           contextMedia: post.activity.contextMedia || [],
           contextLinks: post.activity.contextLinks || [],
           contextNotes: post.activity.contextNotes || '',
+          brandContext: brandContext || undefined,
         }),
       });
 
@@ -543,8 +744,9 @@ export default function Home() {
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
 
   const handleBatchGenerate = async () => {
-    if (!apiKey) {
-      setError('Please enter your Gemini API Key in the field at the top of the page before generating content.');
+    const providerAvailable = aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini;
+    if (!providerAvailable) {
+      setError(`${aiProvider === 'openai' ? 'OpenAI' : 'Gemini'} is not configured on the server. Contact your administrator.`);
       return;
     }
     if (ungeneratedPosts.length === 0) return;
@@ -566,7 +768,7 @@ export default function Home() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            apiKey,
+            provider: aiProvider,
             activities: [post.activity],
             campaignType: post.activityType,
             angle: post.angle,
@@ -577,6 +779,7 @@ export default function Home() {
             contextMedia: post.activity.contextMedia || [],
             contextLinks: post.activity.contextLinks || [],
             contextNotes: post.activity.contextNotes || '',
+            brandContext: brandContext || undefined,
           }),
         });
 
@@ -678,20 +881,113 @@ export default function Home() {
     }
   };
 
+  // ── Google Drive: open/create activity folder ──
+  const openDriveFolder = async (activity: Activity) => {
+    setLoadingDriveFolder(activity.id);
+    try {
+      const res = await fetch('/api/drive/folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activityTitle: activity.title, startDate: activity.startDate }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create folder');
+      setDriveFolders(prev => ({ ...prev, [activity.id]: data }));
+      window.open(data.folderUrl, '_blank');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoadingDriveFolder(null);
+    }
+  };
+
+  // ── Google Drive: load media files from folder ──
+  const loadDriveMedia = async (activity: Activity) => {
+    const folder = driveFolders[activity.id];
+    if (!folder) {
+      // First create/find the folder
+      setLoadingDriveFolder(activity.id);
+      try {
+        const res = await fetch('/api/drive/folders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ activityTitle: activity.title, startDate: activity.startDate }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to find folder');
+        setDriveFolders(prev => ({ ...prev, [activity.id]: data }));
+        setLoadingDriveFolder(null);
+        // Now load files
+        setLoadingDriveFiles(activity.id);
+        const filesRes = await fetch(`/api/drive/files?folderId=${data.folderId}`);
+        const filesData = await filesRes.json();
+        if (filesRes.ok) setDriveFiles(prev => ({ ...prev, [activity.id]: filesData.files || [] }));
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setLoadingDriveFolder(null);
+        setLoadingDriveFiles(null);
+      }
+      return;
+    }
+    setLoadingDriveFiles(activity.id);
+    try {
+      const res = await fetch(`/api/drive/files?folderId=${folder.folderId}`);
+      const data = await res.json();
+      if (res.ok) setDriveFiles(prev => ({ ...prev, [activity.id]: data.files || [] }));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoadingDriveFiles(null);
+    }
+  };
+
+  // ── Wix Blog: publish post ──
+  const handlePublishToWix = async (post: ScheduledPost) => {
+    if (!post.generatedContent) return;
+    setPublishingPostId(post.id);
+    try {
+      // Use the first available content (facebook, linkedin, etc.)
+      const content = post.generatedContent.facebook ||
+        post.generatedContent.linkedin ||
+        post.generatedContent.redbook ||
+        Object.values(post.generatedContent).find(v => typeof v === 'string' && v.length > 0) || '';
+      const res = await fetch('/api/wix/blog/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: post.activityTitle,
+          bodyText: String(content),
+          coverImageUrl: post.activity?.imageUrl || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Publish failed');
+      setPublishedPosts(prev => ({ ...prev, [post.id]: { url: data.postUrl || '' } }));
+      updatePostStatus(post.id, 'posted');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setPublishingPostId(null);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-indigo-50/30 to-purple-50/20 font-sans">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-teal-50/30 to-emerald-50/20 font-sans">
       {/* Top Header Bar */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/60 shadow-sm">
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-teal-200/60 shadow-sm">
         <div className="max-w-[1600px] mx-auto px-4 md:px-8 py-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-200">
-              <Sparkles className="h-5 w-5 text-white" />
-            </div>
+            <img
+              src="/tjcf-logo.png"
+              alt="The Joy Culture Foundation"
+              className="h-10 w-auto object-contain"
+            />
+            <div className="h-8 w-px bg-teal-200 hidden sm:block" />
             <div>
-              <h1 className="text-lg font-bold tracking-tight text-slate-800">
+              <h1 className="text-lg font-bold tracking-tight text-teal-800">
                 Campaign Matrix
               </h1>
-              <p className="text-xs text-slate-500">The Joy Culture Foundation</p>
             </div>
           </div>
 
@@ -706,18 +1002,189 @@ export default function Home() {
                 <AlertCircle className="h-3 w-3" /> Wix Not Configured
               </Badge>
             )}
-            <div className="relative flex-1 sm:flex-none">
-              <Key className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
-              <Input
-                type="password"
-                placeholder="Gemini API Key"
-                value={apiKey}
-                onChange={(e) => handleApiKeyChange(e.target.value)}
-                className="pl-8 h-9 w-full sm:w-[240px] bg-slate-50 border-slate-200 text-sm"
-              />
-            </div>
+            {/* AI provider status badge */}
+            <Badge className={`border-0 text-xs gap-1 hidden sm:flex ${
+              (aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini)
+                ? 'bg-teal-100 text-teal-700'
+                : 'bg-red-100 text-red-700'
+            }`}>
+              <Sparkles className="h-3 w-3" />
+              {aiProvider === 'openai' ? 'OpenAI' : 'Gemini'}
+              {(aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini) ? '' : ' — Not Configured'}
+            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-1.5 text-xs border-teal-200 text-teal-700 hover:bg-teal-50"
+              onClick={() => setShowAiSettings(!showAiSettings)}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              AI Settings
+              {showAiSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            </Button>
+
+            {/* User Avatar & Sign Out */}
+            {session?.user && (
+              <div className="flex items-center gap-2 ml-1">
+                <div className="hidden sm:flex items-center gap-1.5">
+                  {session.user.image ? (
+                    <img
+                      src={session.user.image}
+                      alt={session.user.name || ''}
+                      className="h-7 w-7 rounded-full border border-slate-200"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="h-7 w-7 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-xs font-bold">
+                      {session.user.name?.[0] || session.user.email?.[0] || '?'}
+                    </div>
+                  )}
+                  <span className="text-xs text-slate-500 max-w-[100px] truncate">
+                    {session.user.name?.split(' ')[0] || session.user.email}
+                  </span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-slate-400 hover:text-red-500 hover:bg-red-50"
+                  onClick={() => signOut()}
+                  title="Sign out"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
         </div>
+
+        {/* AI Settings Panel (collapsible) */}
+        {showAiSettings && (
+          <div className="border-t border-teal-100 bg-gradient-to-r from-teal-50/50 to-emerald-50/50">
+            <div className="max-w-[1600px] mx-auto px-4 md:px-8 py-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Provider Selection */}
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">AI Provider</Label>
+                  <div className="flex gap-2">
+                    <button
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                        aiProvider === 'gemini'
+                          ? 'bg-teal-600 text-white shadow-md shadow-teal-200'
+                          : 'bg-white border border-slate-200 text-slate-600 hover:border-teal-300'
+                      }`}
+                      onClick={() => handleProviderChange('gemini')}
+                    >
+                      ✨ Gemini
+                    </button>
+                    <button
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                        aiProvider === 'openai'
+                          ? 'bg-teal-600 text-white shadow-md shadow-teal-200'
+                          : 'bg-white border border-slate-200 text-slate-600 hover:border-teal-300'
+                      }`}
+                      onClick={() => handleProviderChange('openai')}
+                    >
+                      🤖 OpenAI
+                    </button>
+                  </div>
+                </div>
+
+                {/* Provider Status */}
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</Label>
+                  <div className="bg-white rounded-lg border border-slate-200 p-3 space-y-1.5">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className={`h-2 w-2 rounded-full ${serverAiStatus.gemini ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                      <span className={serverAiStatus.gemini ? 'text-slate-700' : 'text-slate-400'}>Gemini {serverAiStatus.gemini ? '— Ready' : '— Not configured'}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className={`h-2 w-2 rounded-full ${serverAiStatus.openai ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                      <span className={serverAiStatus.openai ? 'text-slate-700' : 'text-slate-400'}>OpenAI {serverAiStatus.openai ? '— Ready' : '— Not configured'}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">API keys are managed by the administrator</p>
+                  </div>
+                </div>
+
+                {/* Brand Context */}
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Brand Voice & Style</Label>
+                  <Textarea
+                    placeholder="e.g. Warm, community-focused, bilingual. Use emojis sparingly..."
+                    value={brandContext}
+                    onChange={(e) => handleBrandContextChange(e.target.value)}
+                    className="h-[72px] text-sm bg-white border-slate-200 resize-none"
+                  />
+                </div>
+              </div>
+
+              {/* Prompt Presets Row */}
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Prompt Presets</Label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-[10px] gap-1 text-teal-600"
+                    onClick={() => setShowPresetEditor(!showPresetEditor)}
+                  >
+                    <Plus className="h-3 w-3" />
+                    {showPresetEditor ? 'Cancel' : 'New Preset'}
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {promptPresets.map((preset, idx) => (
+                    <div key={idx} className="group relative">
+                      <button
+                        className={`text-xs px-3 py-1.5 rounded-lg transition-all border ${
+                          brandContext === preset.prompt
+                            ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-teal-300 hover:bg-teal-50'
+                        }`}
+                        onClick={() => applyPreset(preset.prompt)}
+                        title={preset.prompt}
+                      >
+                        {preset.name}
+                      </button>
+                      <button
+                        className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-red-100 text-red-500 text-[8px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-200"
+                        onClick={(e) => { e.stopPropagation(); deletePreset(idx); }}
+                        title="Delete preset"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* New Preset Editor */}
+                {showPresetEditor && (
+                  <div className="bg-white rounded-lg border border-teal-200 p-3 space-y-2 mt-2">
+                    <Input
+                      placeholder="Preset name (e.g. 🎯 Sales Push)"
+                      value={newPresetName}
+                      onChange={(e) => setNewPresetName(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                    <Textarea
+                      placeholder="System prompt instructions..."
+                      value={newPresetPrompt}
+                      onChange={(e) => setNewPresetPrompt(e.target.value)}
+                      className="h-16 text-sm resize-none"
+                    />
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs bg-teal-600 hover:bg-teal-700"
+                      onClick={savePreset}
+                      disabled={!newPresetName.trim() || !newPresetPrompt.trim()}
+                    >
+                      Save Preset
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Main Content */}
@@ -728,14 +1195,14 @@ export default function Home() {
             <TabsList className="bg-white shadow-sm border border-slate-200/60">
               <TabsTrigger
                 value="schedule"
-                className="data-[state=active]:bg-indigo-600 data-[state=active]:text-white gap-2"
+                className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-2"
               >
                 <Calendar className="h-4 w-4" />
                 Weekly Schedule
               </TabsTrigger>
               <TabsTrigger
                 value="activities"
-                className="data-[state=active]:bg-indigo-600 data-[state=active]:text-white gap-2"
+                className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-2"
               >
                 <FileText className="h-4 w-4" />
                 Activities
@@ -749,7 +1216,7 @@ export default function Home() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="gap-1 border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50"
+                    className="gap-1 border-dashed border-teal-300 text-teal-600 hover:bg-teal-50"
                   >
                     <Plus className="h-4 w-4" />
                     Add Event
@@ -899,7 +1366,7 @@ export default function Home() {
                   variant="ghost"
                   size="sm"
                   onClick={() => setCurrentDate(new Date())}
-                  className="text-xs text-indigo-600"
+                  className="text-xs text-teal-600"
                 >
                   Today
                 </Button>
@@ -926,14 +1393,14 @@ export default function Home() {
 
             {/* Generate Week Button */}
             {ungeneratedPosts.length > 0 && (
-              <div className="flex items-center justify-between bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-4 border border-indigo-200/50">
+              <div className="flex items-center justify-between bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-4 border border-teal-200/50">
                 <div>
-                  <p className="text-sm font-medium text-indigo-800">
+                  <p className="text-sm font-medium text-teal-800">
                     {batchGenerating
                       ? `Generating ${batchProgress.current}/${batchProgress.total}...`
                       : `${ungeneratedPosts.length} post${ungeneratedPosts.length > 1 ? 's' : ''} ready to generate`}
                   </p>
-                  <p className="text-xs text-indigo-600/70 mt-0.5">
+                  <p className="text-xs text-teal-600/70 mt-0.5">
                     {generatedCount > 0 ? `${generatedCount} already generated` : 'Generate content for all scheduled posts'}
                   </p>
                 </div>
@@ -941,20 +1408,15 @@ export default function Home() {
                   onClick={handleBatchGenerate}
                   disabled={batchGenerating}
                   className={`gap-2 shadow-md ${
-                    !apiKey
+                    !(serverAiStatus.gemini || serverAiStatus.openai)
                       ? 'bg-slate-300 text-slate-500 hover:bg-slate-400'
-                      : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white'
+                      : 'bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-indigo-700 hover:to-purple-700 text-white'
                   }`}
                 >
                   {batchGenerating ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       {batchProgress.current}/{batchProgress.total}
-                    </>
-                  ) : !apiKey ? (
-                    <>
-                      <Key className="h-4 w-4" />
-                      API Key Required
                     </>
                   ) : (
                     <>
@@ -1151,9 +1613,9 @@ export default function Home() {
                     key={day.dateStr}
                     className={`rounded-xl border transition-all ${
                       dragOverDay === day.dateStr
-                        ? 'border-indigo-400 bg-indigo-50/60 ring-2 ring-indigo-200 shadow-lg'
+                        ? 'border-indigo-400 bg-teal-50/60 ring-2 ring-teal-200 shadow-lg'
                         : day.isToday
-                        ? 'border-indigo-300 bg-indigo-50/30 shadow-md shadow-indigo-100'
+                        ? 'border-teal-300 bg-teal-50/30 shadow-md shadow-teal-100'
                         : 'border-slate-200/60 bg-white shadow-sm'
                     }`}
                     onDragOver={(e) => {
@@ -1183,20 +1645,20 @@ export default function Home() {
                     <div
                       className={`px-3 py-2 border-b text-center ${
                         day.isToday
-                          ? 'border-indigo-200 bg-indigo-100/50'
+                          ? 'border-teal-200 bg-teal-100/50'
                           : 'border-slate-100 bg-slate-50/50'
                       }`}
                     >
                       <div
                         className={`text-xs font-medium uppercase tracking-wider ${
-                          day.isToday ? 'text-indigo-600' : 'text-slate-400'
+                          day.isToday ? 'text-teal-600' : 'text-slate-400'
                         }`}
                       >
                         {day.dayName}
                       </div>
                       <div
                         className={`text-sm font-semibold ${
-                          day.isToday ? 'text-indigo-800' : 'text-slate-700'
+                          day.isToday ? 'text-teal-800' : 'text-slate-700'
                         }`}
                       >
                         {day.monthDay}
@@ -1219,7 +1681,7 @@ export default function Home() {
                                 setAddPostDay(day.dateStr);
                                 setAddPostActivityId(activities[0]?.id || '');
                               }}
-                              className="flex items-center gap-1 text-[10px] text-indigo-500 hover:text-indigo-700 font-medium transition-colors"
+                              className="flex items-center gap-1 text-[10px] text-teal-500 hover:text-teal-700 font-medium transition-colors"
                             >
                               <Plus className="h-3 w-3" />
                               Add post
@@ -1256,16 +1718,23 @@ export default function Home() {
                             >
                               {/* Post Card */}
                               <div
-                                className={`rounded-lg border p-2 cursor-grab active:cursor-grabbing transition-all hover:shadow-md ${
+                                className={`rounded-lg border p-2 cursor-pointer active:cursor-grabbing transition-all hover:shadow-md ${
                                   isExpanded
-                                    ? 'border-indigo-300 ring-1 ring-indigo-200 shadow-md'
+                                    ? 'border-teal-300 ring-1 ring-teal-200 shadow-md'
                                     : post.generatedContent
                                     ? 'border-emerald-200 bg-emerald-50/30'
                                     : 'border-slate-200 hover:border-slate-300'
                                 }`}
-                                onClick={() =>
-                                  setExpandedPostId(isExpanded ? null : post.id)
-                                }
+                                onClick={() => {
+                                  // Navigate to Activities tab and highlight the activity
+                                  setActiveTab('activities');
+                                  setContextPanelId(post.activityId);
+                                  // Scroll to the activity card after tab switch
+                                  setTimeout(() => {
+                                    const el = document.getElementById(`activity-${post.activityId}`);
+                                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                  }, 100);
+                                }}
                               >
                                 {/* Angle + Time + Delete */}
                                 <div className="flex items-center justify-between mb-1">
@@ -1297,15 +1766,7 @@ export default function Home() {
                                   {post.activityTitle}
                                 </p>
 
-                                {/* Context indicator */}
-                                {post.activity && getContextCount(post.activity) > 0 && (
-                                  <div className="flex items-center gap-1 mt-0.5">
-                                    <Paperclip className="h-2.5 w-2.5 text-indigo-400" />
-                                    <span className="text-[9px] text-indigo-500 font-medium">
-                                      {getContextCount(post.activity)} context
-                                    </span>
-                                  </div>
-                                )}
+
 
                                 {/* Status + Platforms */}
                                 <div className="flex items-center justify-between mt-1.5">
@@ -1335,159 +1796,148 @@ export default function Home() {
                                   </div>
                                 </div>
 
-                                {/* Generate Button */}
-                                {!post.generatedContent && (
-                                  <Button
-                                    size="sm"
-                                    className={`w-full mt-2 h-7 text-xs gap-1 ${
-                                      !apiKey
-                                        ? 'bg-slate-300 text-slate-500 cursor-pointer'
-                                        : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white'
-                                    }`}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleGeneratePost(post);
-                                    }}
-                                    disabled={isGenerating}
-                                  >
-                                    {isGenerating ? (
-                                      <>
-                                        <Loader2 className="h-3 w-3 animate-spin" />
-                                        Generating...
-                                      </>
-                                    ) : !apiKey ? (
-                                      <>
-                                        <Key className="h-3 w-3" />
-                                        API Key Required
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Sparkles className="h-3 w-3" />
-                                        Generate
-                                      </>
-                                    )}
-                                  </Button>
-                                )}
-                              </div>
+                                {/* Per-Platform Generate/Content */}
+                                <div className="mt-2 space-y-1">
+                                  {post.platforms.map((platformId) => {
+                                    const platform = PLATFORMS.find((p) => p.id === platformId);
+                                    if (!platform) return null;
 
-                              {/* Expanded Content Drawer */}
-                              {isExpanded && post.generatedContent && (
-                                <div className="mt-2 rounded-lg border border-indigo-200 bg-white overflow-hidden shadow-sm">
-                                  {/* Status controls */}
-                                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-                                    <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">
-                                      Status:
-                                    </span>
-                                    <div className="flex gap-1">
-                                      {(
-                                        Object.entries(STATUS_CONFIG) as [
-                                          ApprovalStatus,
-                                          typeof STATUS_CONFIG[ApprovalStatus],
-                                        ][]
-                                      ).map(([key, config]) => (
-                                        <button
-                                          key={key}
-                                          className={`text-[9px] px-2 py-0.5 rounded font-medium transition-all ${
-                                            post.status === key
-                                              ? config.color + ' ring-1 ring-offset-1'
-                                              : 'bg-white text-slate-400 border border-slate-200 hover:bg-slate-50'
-                                          }`}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            updatePostStatus(post.id, key);
-                                          }}
-                                        >
-                                          {config.label}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-
-                                  {/* Platform content tabs */}
-                                  <div className="max-h-[300px] overflow-y-auto">
-                                    {post.platforms.map((platformId) => {
-                                      const platform = PLATFORMS.find(
-                                        (p) => p.id === platformId
-                                      );
-                                      if (!platform) return null;
-
-                                      const content =
-                                        post.generatedContent?.[
-                                          platformId as keyof typeof post.generatedContent
-                                        ];
-                                      if (!content) return null;
-
-                                      const isEmail = platformId === 'email';
-                                      const displayText = isEmail
+                                    const content = post.generatedContent?.[platformId as keyof typeof post.generatedContent];
+                                    const isPlatformGenerating = generatingPostId === post.id && generatingPlatform === platformId;
+                                    const isEmail = platformId === 'email';
+                                    const displayText = content
+                                      ? isEmail
                                         ? typeof content === 'object'
                                           ? `Subject: ${(content as any).subject}\n\n${(content as any).body}`
                                           : String(content)
-                                        : String(content);
-                                      const copyKey = `${post.id}-${platformId}`;
+                                        : String(content)
+                                      : '';
+                                    const copyKey = `${post.id}-${platformId}`;
 
-                                      return (
-                                        <div
-                                          key={platformId}
-                                          className="border-b border-slate-100 last:border-0"
-                                        >
-                                          <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50/50">
-                                            <span className="text-[10px] font-medium flex items-center gap-1">
-                                              {platform.emoji} {platform.title}
-                                            </span>
-                                            <Button
-                                              variant="ghost"
-                                              size="sm"
-                                              className="h-5 px-1.5 text-[10px] gap-0.5"
+                                    return (
+                                      <div key={platformId} className="rounded-md border border-slate-200 overflow-hidden">
+                                        <div className="flex items-center justify-between px-2 py-1 bg-slate-50">
+                                          <span className="text-[10px] font-medium flex items-center gap-1">
+                                            {platform.emoji} {platform.title}
+                                          </span>
+                                          <div className="flex items-center gap-0.5">
+                                            {content && (
+                                              <>
+                                                <button
+                                                  className="h-5 px-1.5 text-[9px] rounded text-slate-500 hover:bg-slate-200 flex items-center gap-0.5 transition-colors"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    copyToClipboard(copyKey, displayText);
+                                                  }}
+                                                >
+                                                  {copiedTab === copyKey ? (
+                                                    <><Check className="h-2.5 w-2.5 text-green-500" /> Copied</>
+                                                  ) : (
+                                                    <><Copy className="h-2.5 w-2.5" /> Copy</>
+                                                  )}
+                                                </button>
+                                                <button
+                                                  className="h-5 px-1.5 text-[9px] rounded text-teal-600 hover:bg-teal-100 flex items-center gap-0.5 transition-colors"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    openReviewModal(post, platformId);
+                                                  }}
+                                                >
+                                                  <ExternalLink className="h-2.5 w-2.5" /> Review
+                                                </button>
+                                              </>
+                                            )}
+                                            <button
+                                              className={`h-5 px-1.5 text-[9px] rounded flex items-center gap-0.5 transition-colors ${
+                                                content
+                                                  ? 'text-slate-500 hover:bg-slate-200'
+                                                  : 'text-white bg-teal-600 hover:bg-teal-700'
+                                              }`}
                                               onClick={(e) => {
                                                 e.stopPropagation();
-                                                copyToClipboard(copyKey, displayText);
+                                                handleGeneratePlatform(post, platformId);
                                               }}
+                                              disabled={isPlatformGenerating}
                                             >
-                                              {copiedTab === copyKey ? (
-                                                <>
-                                                  <Check className="h-2.5 w-2.5 text-green-500" />
-                                                  Copied
-                                                </>
+                                              {isPlatformGenerating ? (
+                                                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                                              ) : content ? (
+                                                <RefreshCw className="h-2.5 w-2.5" />
                                               ) : (
-                                                <>
-                                                  <Copy className="h-2.5 w-2.5" />
-                                                  Copy
-                                                </>
+                                                <Sparkles className="h-2.5 w-2.5" />
                                               )}
-                                            </Button>
-                                          </div>
-                                          <div className="px-3 py-2">
-                                            <p className="text-[11px] text-slate-600 whitespace-pre-wrap leading-relaxed line-clamp-6">
-                                              {displayText}
-                                            </p>
+                                              {isPlatformGenerating ? '...' : content ? 'Redo' : 'Generate'}
+                                            </button>
                                           </div>
                                         </div>
-                                      );
-                                    })}
-                                  </div>
 
-                                  {/* Regenerate */}
-                                  <div className="px-3 py-2 bg-slate-50 border-t border-slate-100">
+                                        {/* Preview of content (click to review) */}
+                                        {content && (
+                                          <button
+                                            className="w-full px-2 py-1.5 text-left hover:bg-teal-50/30 transition-colors cursor-pointer"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              openReviewModal(post, platformId);
+                                            }}
+                                          >
+                                            <p className="text-[10px] text-slate-500 whitespace-pre-wrap leading-relaxed line-clamp-2">
+                                              {displayText}
+                                            </p>
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+
+                                  {/* Generate All button */}
+                                  {!post.generatedContent && (
                                     <Button
                                       size="sm"
-                                      variant="outline"
-                                      className="w-full h-6 text-[10px] gap-1"
+                                      className="w-full h-7 text-xs gap-1 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         handleGeneratePost(post);
                                       }}
-                                      disabled={generatingPostId === post.id}
+                                      disabled={generatingPostId === post.id && !generatingPlatform}
                                     >
-                                      {generatingPostId === post.id ? (
-                                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                                      {generatingPostId === post.id && !generatingPlatform ? (
+                                        <><Loader2 className="h-3 w-3 animate-spin" /> Generating All...</>
                                       ) : (
-                                        <RefreshCw className="h-2.5 w-2.5" />
+                                        <><Sparkles className="h-3 w-3" /> Generate All Platforms</>
                                       )}
-                                      Regenerate
                                     </Button>
-                                  </div>
+                                  )}
                                 </div>
-                              )}
+
+                                {/* Publish to Website as Blog */}
+                                {post.generatedContent && (
+                                  <button
+                                    className={`w-full mt-1 flex items-center justify-center gap-1 py-1 rounded-md border text-[10px] font-medium transition-colors ${
+                                      post.status === 'posted'
+                                        ? 'border-blue-200 bg-blue-50 text-blue-600'
+                                        : publishingPostId === post.id
+                                        ? 'border-teal-300 bg-teal-50 text-teal-700'
+                                        : 'border-teal-200 bg-teal-50/50 text-teal-600 hover:bg-teal-100 hover:border-teal-300'
+                                    }`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (post.status !== 'posted') {
+                                        handlePublishToWix(post);
+                                      }
+                                    }}
+                                    disabled={publishingPostId === post.id || post.status === 'posted'}
+                                  >
+                                    {publishingPostId === post.id ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : post.status === 'posted' ? (
+                                      <Check className="h-3 w-3" />
+                                    ) : (
+                                      <Globe className="h-3 w-3" />
+                                    )}
+                                    {post.status === 'posted' ? 'Published to Blog' : 'Publish to Website as Blog'}
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           );
                         })
@@ -1500,7 +1950,7 @@ export default function Home() {
                             setAddPostDay(day.dateStr);
                             setAddPostActivityId(activities[0]?.id || '');
                           }}
-                          className="w-full flex items-center justify-center gap-1 text-[10px] text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 font-medium py-1.5 rounded-md border border-dashed border-slate-200 hover:border-indigo-300 transition-all"
+                          className="w-full flex items-center justify-center gap-1 text-[10px] text-slate-400 hover:text-teal-600 hover:bg-teal-50 font-medium py-1.5 rounded-md border border-dashed border-slate-200 hover:border-teal-300 transition-all"
                         >
                           <Plus className="h-3 w-3" />
                           Add
@@ -1518,7 +1968,7 @@ export default function Home() {
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-                      <Zap className="h-4 w-4 text-indigo-500" />
+                      <Zap className="h-4 w-4 text-teal-500" />
                       Scheduling from {activities.length} event{activities.length > 1 ? 's' : ''}
                     </h3>
                     <p className="text-xs text-slate-400">
@@ -1538,7 +1988,7 @@ export default function Home() {
                               href={a.sourceUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1"
+                              className="text-xs font-medium text-teal-600 hover:text-teal-800 hover:underline flex items-center gap-1"
                             >
                               {a.title}
                               <ExternalLink className="h-2.5 w-2.5 opacity-50" />
@@ -1610,9 +2060,10 @@ export default function Home() {
                   return (
                     <div
                       key={activity.id}
+                      id={`activity-${activity.id}`}
                       className={`bg-white rounded-xl border shadow-sm transition-all ${
                         isContextOpen
-                          ? 'border-indigo-300 ring-1 ring-indigo-100 shadow-md'
+                          ? 'border-teal-300 ring-1 ring-teal-100 shadow-md'
                           : 'border-slate-200/60 hover:shadow-md'
                       }`}
                     >
@@ -1621,7 +2072,7 @@ export default function Home() {
                         {(activity.imageUrl || activity.mediaBase64) && (
                           <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-slate-100">
                             <img
-                              src={activity.imageUrl || activity.mediaBase64 || ''}
+                              src={resolveWixImageUrl(activity.imageUrl) || activity.mediaBase64 || ''}
                               alt={activity.title}
                               className="w-full h-full object-cover"
                             />
@@ -1635,7 +2086,7 @@ export default function Home() {
                                   href={activity.sourceUrl}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline underline-offset-2 transition-colors truncate block"
+                                  className="font-semibold text-teal-700 hover:text-teal-900 hover:underline underline-offset-2 transition-colors truncate block"
                                 >
                                   {activity.title}
                                   <ExternalLink className="h-3 w-3 inline-block ml-1 mb-0.5 opacity-50" />
@@ -1662,7 +2113,7 @@ export default function Home() {
                               <Badge className={`${badge.color} border-0 text-[10px] px-2 py-0.5`}>
                                 {badge.label}
                               </Badge>
-                              <Badge className="bg-indigo-50 text-indigo-600 border-0 text-[10px] px-2 py-0.5">
+                              <Badge className="bg-teal-50 text-teal-600 border-0 text-[10px] px-2 py-0.5">
                                 {postCount} posts
                               </Badge>
                               <button
@@ -1679,17 +2130,57 @@ export default function Home() {
                               {activity.description}
                             </p>
                           )}
-                          {activity.sourceUrl && (
-                            <a
-                              href={activity.sourceUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1 rounded-full transition-colors"
+
+                          {/* Google Drive: Upload & Browse Media */}
+                          <div className="flex items-center gap-2 mt-2 flex-wrap">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs gap-1.5 border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
+                              onClick={() => openDriveFolder(activity)}
+                              disabled={loadingDriveFolder === activity.id}
                             >
-                              <Globe className="h-3 w-3" />
-                              View Page
-                              <ExternalLink className="h-2.5 w-2.5" />
-                            </a>
+                              {loadingDriveFolder === activity.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Upload className="h-3 w-3" />
+                              )}
+                              Upload/View Recap Media to Google Drive
+                              <ExternalLink className="h-2.5 w-2.5 opacity-50" />
+                            </Button>
+                            {driveFolders[activity.id] && (
+                              <span className="text-[10px] text-slate-400 truncate max-w-[200px]" title={driveFolders[activity.id].path}>
+                                📁 {driveFolders[activity.id].path}
+                              </span>
+                            )}
+                          </div>
+                          {/* Drive Media Thumbnails */}
+                          {driveFiles[activity.id] && driveFiles[activity.id].length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {driveFiles[activity.id].slice(0, 8).map((file) => (
+                                <a
+                                  key={file.id}
+                                  href={file.viewUrl || '#'}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="w-12 h-12 rounded-lg overflow-hidden border border-slate-200 hover:border-teal-400 transition-colors flex-shrink-0"
+                                  title={file.name}
+                                >
+                                  {file.thumbnailUrl ? (
+                                    <img src={file.thumbnailUrl} alt={file.name} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div className="w-full h-full bg-slate-100 flex items-center justify-center">
+                                      <ImageIcon className="h-3 w-3 text-slate-400" />
+                                    </div>
+                                  )}
+                                </a>
+                              ))}
+                              {driveFiles[activity.id].length > 8 && (
+                                <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-[10px] text-slate-500 font-medium border border-slate-200">
+                                  +{driveFiles[activity.id].length - 8}
+                                </div>
+                              )}
+                            </div>
                           )}
                           {/* Post schedule + Context toggle row */}
                           <div className="flex items-center justify-between mt-2 gap-2">
@@ -1716,20 +2207,20 @@ export default function Home() {
                               size="sm"
                               className={`h-7 text-xs gap-1.5 flex-shrink-0 ${
                                 isContextOpen
-                                  ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                  ? 'bg-teal-600 hover:bg-teal-700 text-white'
                                   : ctxCount > 0
-                                  ? 'border-indigo-300 text-indigo-600 bg-indigo-50 hover:bg-indigo-100'
-                                  : 'border-dashed border-slate-300 text-slate-500 hover:border-indigo-300 hover:text-indigo-600'
+                                  ? 'border-teal-300 text-teal-600 bg-teal-50 hover:bg-teal-100'
+                                  : 'border-dashed border-slate-300 text-slate-500 hover:border-teal-300 hover:text-teal-600'
                               }`}
                               onClick={() =>
                                 setContextPanelId(isContextOpen ? null : activity.id)
                               }
                             >
                               <Paperclip className="h-3 w-3" />
-                              Context
+                              Add Context
                               {ctxCount > 0 && (
                                 <span className={`text-[10px] rounded-full px-1.5 py-0 font-bold ${
-                                  isContextOpen ? 'bg-white/20' : 'bg-indigo-100 text-indigo-700'
+                                  isContextOpen ? 'bg-white/20' : 'bg-teal-100 text-teal-700'
                                 }`}>
                                   {ctxCount}
                                 </span>
@@ -1804,7 +2295,7 @@ export default function Home() {
 
                               {/* Upload button */}
                               <div
-                                className="border-2 border-dashed border-slate-200 rounded-lg p-3 text-center cursor-pointer hover:bg-indigo-50/50 hover:border-indigo-300 transition-all"
+                                className="border-2 border-dashed border-slate-200 rounded-lg p-3 text-center cursor-pointer hover:bg-teal-50/50 hover:border-teal-300 transition-all"
                                 onClick={() => contextFileRef.current?.click()}
                               >
                                 <input
@@ -1936,7 +2427,7 @@ export default function Home() {
                                 <span className="text-[11px] text-slate-500">
                                   {ctxCount} context item{ctxCount > 1 ? 's' : ''} attached
                                   {' — '}
-                                  <span className="text-indigo-600 font-medium">
+                                  <span className="text-teal-600 font-medium">
                                     will be used during content generation
                                   </span>
                                 </span>
@@ -1959,7 +2450,7 @@ export default function Home() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Plus className="h-4 w-4 text-indigo-600" />
+              <Plus className="h-4 w-4 text-teal-600" />
               Add Post to {addPostDay ? format(parseISO(addPostDay), 'EEEE, MMM d') : ''}
             </DialogTitle>
             <DialogDescription>
@@ -2031,7 +2522,7 @@ export default function Home() {
                       }}
                       className={`text-xs px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${
                         isSelected
-                          ? 'bg-indigo-50 border-indigo-300 text-indigo-700 shadow-sm'
+                          ? 'bg-teal-50 border-teal-300 text-teal-700 shadow-sm'
                           : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'
                       }`}
                     >
@@ -2054,7 +2545,7 @@ export default function Home() {
             </Button>
             <Button
               size="sm"
-              className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white gap-1"
+              className="bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-indigo-700 hover:to-purple-700 text-white gap-1"
               onClick={handleAddPostToDay}
               disabled={!addPostActivityId || addPostPlatforms.length === 0}
             >
@@ -2062,6 +2553,55 @@ export default function Home() {
               Add Post
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Review Modal ─────────────────────────────────── */}
+      <Dialog open={!!reviewModal?.open} onOpenChange={(open) => !open && setReviewModal(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <span className="text-xl">{reviewModal?.platformEmoji}</span>
+              {reviewModal?.platformTitle} — {reviewModal?.postTitle}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Review the generated content below. Click Copy to copy to clipboard.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
+              <pre className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-sans">
+                {reviewModal?.content}
+              </pre>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => {
+                if (reviewModal?.content) {
+                  navigator.clipboard.writeText(reviewModal.content);
+                  setCopiedTab('review-modal');
+                  setTimeout(() => setCopiedTab(null), 2000);
+                }
+              }}
+            >
+              {copiedTab === 'review-modal' ? (
+                <><Check className="h-3.5 w-3.5 text-green-500" /> Copied!</>
+              ) : (
+                <><Copy className="h-3.5 w-3.5" /> Copy to Clipboard</>
+              )}
+            </Button>
+            <Button
+              size="sm"
+              className="bg-teal-600 hover:bg-teal-700"
+              onClick={() => setReviewModal(null)}
+            >
+              Done
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -176,6 +176,10 @@ export interface ScheduledPost {
   notes?: string;
   // Reference to the source activity for generation
   activity?: Activity;
+  // Per-post context (overrides activity-level context when present)
+  contextNotes?: string;
+  contextMedia?: ContextAttachment[];
+  contextLinks?: ContextLink[];
 }
 
 // ─── Platforms ────────────────────────────────────────────────────

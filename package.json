@@ -17,6 +17,8 @@
     "googleapis": "^171.4.0",
     "lucide-react": "^0.576.0",
     "next": "16.1.6",
+    "next-auth": "^4.24.13",
+    "openai": "^6.27.0",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
