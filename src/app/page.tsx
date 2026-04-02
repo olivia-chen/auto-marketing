@@ -895,11 +895,18 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create folder');
       setDriveFolders(prev => ({ ...prev, [activity.id]: data }));
+
+      // Force Google Drive to open under the TJCF account
+      const userEmail = session?.user?.email || '';
+      const tjcfEmail = userEmail.endsWith('@thejoyculturefoundation.org') ? userEmail : '';
+      const driveUrl = tjcfEmail
+        ? `${data.folderUrl}?authuser=${encodeURIComponent(tjcfEmail)}`
+        : `${data.folderUrl}?authuser=0&hd=thejoyculturefoundation.org`;
+
       if (newWindow) {
-        newWindow.location.href = data.folderUrl;
+        newWindow.location.href = driveUrl;
       } else {
-        // Fallback if popup was still blocked
-        window.location.href = data.folderUrl;
+        window.location.href = driveUrl;
       }
     } catch (err: any) {
       setError(err.message);
