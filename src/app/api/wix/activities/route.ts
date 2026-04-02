@@ -74,7 +74,9 @@ export async function GET(req: NextRequest) {
 
       if (scheduleId) {
         // Query individual sessions from Calendar V3
+        console.log(`[Sessions] Querying sessions for "${serviceName}" scheduleId=${scheduleId} from=${fromDate} to=${toDate}`);
         const sessions = await querySessionsForSchedule(options, scheduleId, fromDate, toDate);
+        console.log(`[Sessions] Got ${sessions.length} sessions for "${serviceName}"`, sessions.length > 0 ? JSON.stringify(sessions[0]).slice(0, 200) : 'EMPTY');
 
         if (sessions.length > 1) {
           // Multi-session: create one activity per session

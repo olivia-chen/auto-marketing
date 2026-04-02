@@ -282,11 +282,15 @@ export async function querySessionsForSchedule(
       fromLocalDate: `${fromDate}T00:00:00.000Z`,
       toLocalDate: `${toDate}T23:59:59.000Z`,
     });
-    return (data.events || []).filter(
+    console.log(`[Calendar V3] Raw response for schedule ${scheduleId}:`, JSON.stringify(data).slice(0, 500));
+    const allEvents = data.events || [];
+    const filtered = allEvents.filter(
       (e: WixCalendarEvent) => e.type !== 'WORKING_HOURS' && e.status !== 'CANCELLED'
     );
-  } catch (error) {
-    console.error(`Error querying sessions for schedule ${scheduleId}:`, error);
+    console.log(`[Calendar V3] ${allEvents.length} total events, ${filtered.length} after filtering`);
+    return filtered;
+  } catch (error: any) {
+    console.error(`Error querying sessions for schedule ${scheduleId}:`, error?.message || error);
     return [];
   }
 }
