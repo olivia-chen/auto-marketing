@@ -991,22 +991,22 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-teal-50/30 to-emerald-50/20 font-sans">
       {/* Top Header Bar */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-teal-200/60 shadow-sm">
-        <div className="max-w-[1600px] mx-auto px-4 md:px-8 py-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-          <div className="flex items-center gap-3">
+        <div className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-8 py-2 sm:py-3 flex flex-row justify-between items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <img
               src="/tjcf-logo.png"
               alt="The Joy Culture Foundation"
-              className="h-10 w-auto object-contain"
+              className="h-8 sm:h-10 w-auto object-contain flex-shrink-0"
             />
             <div className="h-8 w-px bg-teal-200 hidden sm:block" />
-            <div>
+            <div className="hidden sm:block">
               <h1 className="text-lg font-bold tracking-tight text-teal-800">
                 Campaign Matrix
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
             {wixConnected === true && (
               <Badge className="bg-emerald-100 text-emerald-700 border-0 text-xs gap-1 hidden sm:flex">
                 <Globe className="h-3 w-3" /> Wix Connected
@@ -1030,11 +1030,12 @@ export default function Home() {
             <Button
               variant="outline"
               size="sm"
-              className="h-9 gap-1.5 text-xs border-teal-200 text-teal-700 hover:bg-teal-50"
+              className="h-8 sm:h-9 gap-1 sm:gap-1.5 text-[10px] sm:text-xs border-teal-200 text-teal-700 hover:bg-teal-50 px-2 sm:px-3"
               onClick={() => setShowAiSettings(!showAiSettings)}
             >
-              <Sparkles className="h-3.5 w-3.5" />
-              AI Settings
+              <Sparkles className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+              <span className="hidden sm:inline">AI Settings</span>
+              <span className="sm:hidden">AI</span>
               {showAiSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
             </Button>
 
@@ -1075,8 +1076,8 @@ export default function Home() {
         {/* AI Settings Panel (collapsible) */}
         {showAiSettings && (
           <div className="border-t border-teal-100 bg-gradient-to-r from-teal-50/50 to-emerald-50/50">
-            <div className="max-w-[1600px] mx-auto px-4 md:px-8 py-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-8 py-3 sm:py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
                 {/* Provider Selection */}
                 <div className="space-y-2">
                   <Label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">AI Provider</Label>
@@ -1203,23 +1204,23 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-[1600px] mx-auto px-4 md:px-8 py-6 space-y-6">
+      <main className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
         {/* Tab Navigation */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <TabsList className="bg-white shadow-sm border border-slate-200/60">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
+            <TabsList className="bg-white shadow-sm border border-slate-200/60 w-full sm:w-auto">
               <TabsTrigger
                 value="schedule"
-                className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-2"
+                className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-1.5 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-initial"
               >
-                <Calendar className="h-4 w-4" />
-                Weekly Schedule
+                <Calendar className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                Schedule
               </TabsTrigger>
               <TabsTrigger
                 value="activities"
-                className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-2"
+                className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-1.5 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-initial"
               >
-                <FileText className="h-4 w-4" />
+                <FileText className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                 Activities
                 <span className="text-xs opacity-60">({activities.length})</span>
               </TabsTrigger>
@@ -1360,34 +1361,36 @@ export default function Home() {
           {/* ─── SCHEDULE TAB (Mon-Fri Grid) ──────────────────── */}
           <TabsContent value="schedule" className="mt-6 space-y-4">
             {/* Week Navigator */}
-            <div className="flex items-center justify-between bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
+            <div className="flex items-center justify-between bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-slate-200/60">
               <Button
                 variant="ghost"
                 size="sm"
+                className="h-8 w-8 p-0 sm:h-9 sm:w-auto sm:px-3"
                 onClick={() => setCurrentDate(subWeeks(currentDate, 1))}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <div className="text-center">
-                <h2 className="text-lg font-semibold text-slate-800">
+              <div className="text-center min-w-0 flex-1 px-1">
+                <h2 className="text-sm sm:text-lg font-semibold text-slate-800">
                   {formatDateRange(weekRange.start, weekRange.end)}
                 </h2>
-                <p className="text-xs text-slate-500">
-                  {totalPosts} scheduled posts · {generatedCount} generated · {activities.length} events
+                <p className="text-[10px] sm:text-xs text-slate-500 truncate">
+                  {totalPosts} posts · {generatedCount} generated · {activities.length} events
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 sm:gap-2">
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setCurrentDate(new Date())}
-                  className="text-xs text-teal-600"
+                  className="text-[10px] sm:text-xs text-teal-600 h-8 px-2 sm:px-3"
                 >
                   Today
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
+                  className="h-8 w-8 p-0 sm:h-9 sm:w-auto sm:px-3"
                   onClick={() => setCurrentDate(addWeeks(currentDate, 1))}
                 >
                   <ChevronRight className="h-4 w-4" />
@@ -1622,7 +1625,7 @@ export default function Home() {
                 </Button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
                 {daySchedules.map((day) => (
                   <div
                     key={day.dateStr}
@@ -2083,9 +2086,9 @@ export default function Home() {
                       }`}
                     >
                       {/* Activity Header */}
-                      <div className="p-4 flex items-start gap-4">
+                      <div className="p-3 sm:p-4 flex items-start gap-3 sm:gap-4">
                         {(activity.imageUrl || activity.mediaBase64) && (
-                          <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-slate-100">
+                          <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-lg overflow-hidden flex-shrink-0 border border-slate-100">
                             <img
                               src={resolveWixImageUrl(activity.imageUrl) || activity.mediaBase64 || ''}
                               alt={activity.title}
@@ -2094,8 +2097,8 @@ export default function Home() {
                           </div>
                         )}
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
+                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-1 sm:gap-2">
+                            <div className="min-w-0">
                               {activity.sourceUrl ? (
                                 <a
                                   href={activity.sourceUrl}
@@ -2124,7 +2127,7 @@ export default function Home() {
                                 )}
                               </div>
                             </div>
-                            <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 flex-wrap">
                               <Badge className={`${badge.color} border-0 text-[10px] px-2 py-0.5`}>
                                 {badge.label}
                               </Badge>
@@ -2151,7 +2154,7 @@ export default function Home() {
                             <Button
                               variant="outline"
                               size="sm"
-                              className="h-7 text-xs gap-1.5 border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
+                              className="h-7 text-[10px] sm:text-xs gap-1 sm:gap-1.5 border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
                               onClick={() => openDriveFolder(activity)}
                               disabled={loadingDriveFolder === activity.id}
                             >
@@ -2160,7 +2163,8 @@ export default function Home() {
                               ) : (
                                 <Upload className="h-3 w-3" />
                               )}
-                              Upload/View Recap Media to Google Drive
+                              <span className="hidden sm:inline">Upload/View Recap Media to Google Drive</span>
+                              <span className="sm:hidden">Upload Media</span>
                               <ExternalLink className="h-2.5 w-2.5 opacity-50" />
                             </Button>
                             {driveFolders[activity.id] && (
