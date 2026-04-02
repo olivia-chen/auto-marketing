@@ -137,12 +137,20 @@ export async function getActivityFolder(activityTitle: string, startDate: string
     try {
       const fileInfo = await drive.files.get({
         fileId: ROOT_FOLDER_ID,
-        fields: 'id,name,driveId',
+        fields: 'id,name,driveId,parents',
         supportsAllDrives: true,
       });
       sharedDriveId = fileInfo.data.driveId || undefined;
+      console.log('[Drive] Root folder info:', {
+        id: fileInfo.data.id,
+        name: fileInfo.data.name,
+        driveId: fileInfo.data.driveId,
+        parents: fileInfo.data.parents,
+        isSharedDrive: !!sharedDriveId,
+      });
     } catch (verifyErr: any) {
       const status = verifyErr?.code || verifyErr?.response?.status;
+      console.error('[Drive] Root folder verify error:', status, verifyErr.message);
       if (status === 404) {
         throw new Error(
           `Google Drive folder not found or not shared with the service account. ` +
@@ -167,7 +175,9 @@ export async function getActivityFolder(activityTitle: string, startDate: string
   } catch {
     monthStr = 'undated';
   }
+  console.log('[Drive] Creating month folder:', monthStr, 'in parent:', root.id, 'sharedDriveId:', sharedDriveId);
   const monthFolder = await getOrCreateFolder(drive, monthStr, root.id, sharedDriveId);
+  console.log('[Drive] Month folder result:', monthFolder);
 
   // 3. Activity folder (e.g. "Spring Paint Class — Apr 15")
   let dayLabel: string;
