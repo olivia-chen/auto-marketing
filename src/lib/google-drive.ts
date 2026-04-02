@@ -55,6 +55,7 @@ async function findFolder(
     pageSize: 1,
     supportsAllDrives: true,
     includeItemsFromAllDrives: true,
+    corpora: 'allDrives',
   });
 
   return res.data.files?.[0]?.id || null;
@@ -63,7 +64,8 @@ async function findFolder(
 async function createFolder(
   drive: ReturnType<typeof google.drive>,
   name: string,
-  parentId?: string
+  parentId?: string,
+  driveId?: string
 ): Promise<{ id: string; webViewLink: string }> {
   const res = await drive.files.create({
     requestBody: {
@@ -77,17 +79,19 @@ async function createFolder(
 
   // For non-shared-drive folders, share so anyone with link can upload
   // (Shared Drive folders inherit permissions, so this may fail — that's OK)
-  try {
-    await drive.permissions.create({
-      fileId: res.data.id!,
-      requestBody: {
-        role: 'writer',
-        type: 'anyone',
-      },
-      supportsAllDrives: true,
-    });
-  } catch {
-    // Shared Drives don't allow per-file permission changes — that's fine
+  if (!driveId) {
+    try {
+      await drive.permissions.create({
+        fileId: res.data.id!,
+        requestBody: {
+          role: 'writer',
+          type: 'anyone',
+        },
+        supportsAllDrives: true,
+      });
+    } catch {
+      // Shared Drives don't allow per-file permission changes — that's fine
+    }
   }
 
   return {
@@ -99,7 +103,8 @@ async function createFolder(
 async function getOrCreateFolder(
   drive: ReturnType<typeof google.drive>,
   name: string,
-  parentId?: string
+  parentId?: string,
+  driveId?: string
 ): Promise<{ id: string; webViewLink: string }> {
   const existingId = await findFolder(drive, name, parentId);
   if (existingId) {
@@ -108,7 +113,7 @@ async function getOrCreateFolder(
       webViewLink: `https://drive.google.com/drive/folders/${existingId}`,
     };
   }
-  return createFolder(drive, name, parentId);
+  return createFolder(drive, name, parentId, driveId);
 }
 
 // ─── Public API ──────────────────────────────────────────────────────
@@ -125,10 +130,17 @@ export async function getActivityFolder(activityTitle: string, startDate: string
 
   // 1. Root folder — use the configured shared folder, or find/create one
   let root: { id: string; webViewLink: string };
+  let sharedDriveId: string | undefined;
+
   if (ROOT_FOLDER_ID) {
-    // Verify the service account can access this folder
+    // Verify the service account can access this folder and detect if it's in a Shared Drive
     try {
-      await drive.files.get({ fileId: ROOT_FOLDER_ID, fields: 'id,name', supportsAllDrives: true });
+      const fileInfo = await drive.files.get({
+        fileId: ROOT_FOLDER_ID,
+        fields: 'id,name,driveId',
+        supportsAllDrives: true,
+      });
+      sharedDriveId = fileInfo.data.driveId || undefined;
     } catch (verifyErr: any) {
       const status = verifyErr?.code || verifyErr?.response?.status;
       if (status === 404) {
@@ -147,7 +159,7 @@ export async function getActivityFolder(activityTitle: string, startDate: string
     root = await getOrCreateFolder(drive, ROOT_FOLDER_NAME);
   }
 
-  // 2. Month subfolder (e.g. "2026-03")
+  // 2. Month subfolder (e.g. "2026-04")
   let monthStr: string;
   try {
     const d = new Date(startDate);
@@ -155,9 +167,9 @@ export async function getActivityFolder(activityTitle: string, startDate: string
   } catch {
     monthStr = 'undated';
   }
-  const monthFolder = await getOrCreateFolder(drive, monthStr, root.id);
+  const monthFolder = await getOrCreateFolder(drive, monthStr, root.id, sharedDriveId);
 
-  // 3. Activity folder (e.g. "Spring Paint Class — Mar 15")
+  // 3. Activity folder (e.g. "Spring Paint Class — Apr 15")
   let dayLabel: string;
   try {
     const d = new Date(startDate);
@@ -169,7 +181,7 @@ export async function getActivityFolder(activityTitle: string, startDate: string
   const activityFolderName = dayLabel
     ? `${activityTitle} — ${dayLabel}`
     : activityTitle;
-  const activityFolder = await getOrCreateFolder(drive, activityFolderName, monthFolder.id);
+  const activityFolder = await getOrCreateFolder(drive, activityFolderName, monthFolder.id, sharedDriveId);
 
   return {
     folderId: activityFolder.id,
