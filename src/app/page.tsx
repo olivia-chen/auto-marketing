@@ -1207,7 +1207,8 @@ export default function Home() {
       <main className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
         {/* Tab Navigation */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
+          <div className="sticky top-[49px] sm:top-[57px] z-40 bg-slate-50/80 backdrop-blur-lg -mx-3 sm:-mx-4 md:-mx-8 px-3 sm:px-4 md:px-8 py-2 sm:py-3 border-b border-slate-200/40">
+           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
             <TabsList className="bg-white shadow-sm border border-slate-200/60 w-full sm:w-auto">
               <TabsTrigger
                 value="schedule"
@@ -1345,6 +1346,7 @@ export default function Home() {
                 </DialogContent>
               </Dialog>
             </div>
+          </div>
           </div>
 
           {/* Error Banner */}
