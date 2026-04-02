@@ -167,40 +167,29 @@ export async function getActivityFolder(activityTitle: string, startDate: string
     root = await getOrCreateFolder(drive, ROOT_FOLDER_NAME);
   }
 
-  // 2. Month subfolder (e.g. "2026-04")
-  let monthStr: string;
+  // 2. Activity folder — named "YYYYMMDD-Activity Name" directly under root
+  let datePrefix: string;
   try {
     const d = new Date(startDate);
-    monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    datePrefix = `${yyyy}${mm}${dd}`;
   } catch {
-    monthStr = 'undated';
+    datePrefix = 'undated';
   }
-  console.log('[Drive] Creating month folder:', monthStr, 'in parent:', root.id, 'sharedDriveId:', sharedDriveId);
-  const monthFolder = await getOrCreateFolder(drive, monthStr, root.id, sharedDriveId);
-  console.log('[Drive] Month folder result:', monthFolder);
+  const activityFolderName = `${datePrefix}-${activityTitle}`;
+  console.log('[Drive] Creating activity folder:', activityFolderName, 'in parent:', root.id, 'sharedDriveId:', sharedDriveId);
+  const activityFolder = await getOrCreateFolder(drive, activityFolderName, root.id, sharedDriveId);
+  console.log('[Drive] Activity folder result:', activityFolder);
 
-  // 3. Activity folder (e.g. "Spring Paint Class — Apr 15")
-  let dayLabel: string;
-  try {
-    const d = new Date(startDate);
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    dayLabel = `${months[d.getMonth()]} ${d.getDate()}`;
-  } catch {
-    dayLabel = '';
-  }
-  const activityFolderName = dayLabel
-    ? `${activityTitle} — ${dayLabel}`
-    : activityTitle;
-  const activityFolder = await getOrCreateFolder(drive, activityFolderName, monthFolder.id, sharedDriveId);
-
-  // Build URL — for shared drives, use the direct folder URL (Google Drive auto-detects shared drive context)
   const folderUrl = `https://drive.google.com/drive/folders/${activityFolder.id}`;
 
   return {
     folderId: activityFolder.id,
     folderUrl,
     folderName: activityFolderName,
-    path: `${ROOT_FOLDER_NAME}/${monthStr}/${activityFolderName}`,
+    path: `Photos/${activityFolderName}`,
   };
 }
 
