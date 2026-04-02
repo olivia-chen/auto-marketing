@@ -899,9 +899,20 @@ export default function Home() {
       // Force Google Drive to open under the TJCF account
       const userEmail = session?.user?.email || '';
       const tjcfEmail = userEmail.endsWith('@thejoyculturefoundation.org') ? userEmail : '';
-      const driveUrl = tjcfEmail
-        ? `${data.folderUrl}?authuser=${encodeURIComponent(tjcfEmail)}`
-        : `${data.folderUrl}?authuser=0&hd=thejoyculturefoundation.org`;
+
+      // Detect mobile device
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const folderId = data.folderId;
+
+      let driveUrl: string;
+      if (isMobile && folderId) {
+        // Use Google Drive app deep link on mobile for native upload experience
+        driveUrl = `https://drive.google.com/drive/folders/${folderId}`;
+      } else {
+        driveUrl = tjcfEmail
+          ? `${data.folderUrl}?authuser=${encodeURIComponent(tjcfEmail)}`
+          : `${data.folderUrl}?authuser=0&hd=thejoyculturefoundation.org`;
+      }
 
       if (newWindow) {
         newWindow.location.href = driveUrl;
