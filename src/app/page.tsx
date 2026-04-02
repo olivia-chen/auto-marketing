@@ -2163,44 +2163,10 @@ export default function Home() {
                               ) : (
                                 <Upload className="h-3 w-3" />
                               )}
-                              <span className="hidden sm:inline">Upload/View Recap Media to Google Drive</span>
-                              <span className="sm:hidden">Upload Media</span>
+                              Upload/View Media
                               <ExternalLink className="h-2.5 w-2.5 opacity-50" />
                             </Button>
-                            {driveFolders[activity.id] && (
-                              <span className="text-[10px] text-slate-400 truncate max-w-[200px]" title={driveFolders[activity.id].path}>
-                                📁 {driveFolders[activity.id].path}
-                              </span>
-                            )}
                           </div>
-                          {/* Drive Media Thumbnails */}
-                          {driveFiles[activity.id] && driveFiles[activity.id].length > 0 && (
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              {driveFiles[activity.id].slice(0, 8).map((file) => (
-                                <a
-                                  key={file.id}
-                                  href={file.viewUrl || '#'}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="w-12 h-12 rounded-lg overflow-hidden border border-slate-200 hover:border-teal-400 transition-colors flex-shrink-0"
-                                  title={file.name}
-                                >
-                                  {file.thumbnailUrl ? (
-                                    <img src={file.thumbnailUrl} alt={file.name} className="w-full h-full object-cover" />
-                                  ) : (
-                                    <div className="w-full h-full bg-slate-100 flex items-center justify-center">
-                                      <ImageIcon className="h-3 w-3 text-slate-400" />
-                                    </div>
-                                  )}
-                                </a>
-                              ))}
-                              {driveFiles[activity.id].length > 8 && (
-                                <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-[10px] text-slate-500 font-medium border border-slate-200">
-                                  +{driveFiles[activity.id].length - 8}
-                                </div>
-                              )}
-                            </div>
-                          )}
                           {/* Post schedule + Context toggle row */}
                           <div className="flex items-center justify-between mt-2 gap-2">
                             {postCount > 0 && (
