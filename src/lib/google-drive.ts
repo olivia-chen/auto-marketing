@@ -193,9 +193,12 @@ export async function getActivityFolder(activityTitle: string, startDate: string
     : activityTitle;
   const activityFolder = await getOrCreateFolder(drive, activityFolderName, monthFolder.id, sharedDriveId);
 
+  // Build URL — for shared drives, use the direct folder URL (Google Drive auto-detects shared drive context)
+  const folderUrl = `https://drive.google.com/drive/folders/${activityFolder.id}`;
+
   return {
     folderId: activityFolder.id,
-    folderUrl: activityFolder.webViewLink,
+    folderUrl,
     folderName: activityFolderName,
     path: `${ROOT_FOLDER_NAME}/${monthStr}/${activityFolderName}`,
   };
