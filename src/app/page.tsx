@@ -1587,14 +1587,16 @@ export default function Home() {
             )}
 
             {/* Schedule Legend */}
-            <div className="flex flex-wrap gap-2 px-1">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 px-1">
               {(Object.entries(ANGLE_CONFIG) as [PostAngle, typeof ANGLE_CONFIG[PostAngle]][]).map(
                 ([key, config]) => (
                   <span
                     key={key}
                     className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium ${config.color}`}
+                    title={`${config.description} — ${config.timing}`}
                   >
                     {config.emoji} {config.label}
+                    <span className="opacity-60 text-[9px]">({config.timing})</span>
                   </span>
                 )
               )}

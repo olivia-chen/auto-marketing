@@ -89,43 +89,49 @@ export type PostAngle =
 
 export const ANGLE_CONFIG: Record<
   PostAngle,
-  { label: string; emoji: string; description: string; color: string }
+  { label: string; emoji: string; description: string; color: string; timing: string }
 > = {
   teaser: {
     label: 'Teaser',
     emoji: '🔮',
     description: 'Early awareness, build curiosity',
     color: 'bg-violet-100 text-violet-700',
+    timing: '14 days before',
   },
   details: {
     label: 'Details',
     emoji: '📋',
     description: 'Full info: what/when/where/how',
     color: 'bg-blue-100 text-blue-700',
+    timing: '7 days before',
   },
   social_proof: {
     label: 'Social Proof',
     emoji: '⭐',
     description: 'Benefits, testimonials, value',
     color: 'bg-amber-100 text-amber-700',
+    timing: '3 days before',
   },
   urgency: {
     label: 'Urgency',
     emoji: '⚡',
     description: 'Last chance, limited spots',
     color: 'bg-red-100 text-red-700',
+    timing: '1 day before',
   },
   day_of: {
     label: 'Day-of',
     emoji: '📍',
     description: 'Today logistics, excitement',
     color: 'bg-emerald-100 text-emerald-700',
+    timing: 'Day of event',
   },
   recap: {
     label: 'Recap',
     emoji: '📸',
     description: 'Post-event highlights, photos',
     color: 'bg-pink-100 text-pink-700',
+    timing: '1 day after',
   },
 };
 
