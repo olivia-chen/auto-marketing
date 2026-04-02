@@ -249,7 +249,44 @@ export async function listAvailableTimeSlots(
   }
 }
 
-// Note: The Calendar V3 events/query API was removed because it returns
-// stale historical session records and ignores rangeStart/rangeEnd filtering.
-// Future course sessions are now discovered via queryFutureCourses() which
-// reads the schedule metadata from each COURSE service.
+// Note: The Calendar V3 events/query API is used to fetch individual sessions
+// for multi-session courses and classes.
+
+export interface WixCalendarEvent {
+  id: string;
+  scheduleId?: string;
+  title?: string;
+  start?: { timestamp?: string; localDate?: { year?: number; monthOfYear?: number; dayOfMonth?: number; hourOfDay?: number; minutesOfHour?: number } };
+  end?: { timestamp?: string };
+  type?: string;
+  status?: string;
+}
+
+/**
+ * Query individual sessions for a service's schedule.
+ * Uses Calendar V3 events/query to get each session date.
+ */
+export async function querySessionsForSchedule(
+  options: WixApiOptions,
+  scheduleId: string,
+  fromDate: string,
+  toDate: string
+): Promise<WixCalendarEvent[]> {
+  try {
+    const data = await wixFetch('/calendar/v3/events/query', options, {
+      query: {
+        filter: {
+          scheduleId: { $eq: scheduleId },
+        },
+      },
+      fromLocalDate: `${fromDate}T00:00:00.000Z`,
+      toLocalDate: `${toDate}T23:59:59.000Z`,
+    });
+    return (data.events || []).filter(
+      (e: WixCalendarEvent) => e.type !== 'WORKING_HOURS' && e.status !== 'CANCELLED'
+    );
+  } catch (error) {
+    console.error(`Error querying sessions for schedule ${scheduleId}:`, error);
+    return [];
+  }
+}

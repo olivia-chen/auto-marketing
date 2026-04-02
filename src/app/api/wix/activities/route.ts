@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { queryWixEvents, listWixServices, queryFutureCourses, WixService } from '@/lib/wix-client';
+import { queryFutureCourses, querySessionsForSchedule } from '@/lib/wix-client';
 import { Activity } from '@/lib/types';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -7,10 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
  * GET /api/wix/activities?from=YYYY-MM-DD&to=YYYY-MM-DD
  *
  * Fetches upcoming activities from Wix Bookings (COURSE-type services)
- * and merges them into a unified Activity[] format.
- *
- * Uses service schedule metadata (firstSessionStart/lastSessionEnd)
- * instead of the Calendar API which returns stale session records.
+ * and expands multi-session courses into individual session activities.
  */
 export async function GET(req: NextRequest) {
   const apiKey = process.env.WIX_API_KEY;
@@ -48,22 +45,15 @@ export async function GET(req: NextRequest) {
 
   /**
    * Resolve a Wix media reference to a full CDN URL.
-   * Wix returns image URLs in several formats:
-   *   - "wix:image://v1/<mediaId>/<originalFilename>#..."  (URI scheme)
-   *   - "<mediaId>"  (bare filename like "abc123~mv2.jpeg")
-   *   - full https URL (already usable)
    */
   const resolveWixImageUrl = (raw: string | undefined): string | undefined => {
     if (!raw) return undefined;
-    // Already a full URL
     if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-    // Wix URI scheme: wix:image://v1/<mediaId>/<originalFilename>#originWidth=...&originHeight=...
     if (raw.startsWith('wix:image://')) {
       const parts = raw.replace('wix:image://v1/', '').split('/');
       const mediaId = parts[0];
       if (mediaId) return `https://static.wixstatic.com/media/${mediaId}`;
     }
-    // Bare filename — prefix with CDN base
     return `https://static.wixstatic.com/media/${raw}`;
   };
 
@@ -73,40 +63,107 @@ export async function GET(req: NextRequest) {
 
     const activities: Activity[] = [];
 
-    // Convert services to Activities using schedule metadata
+    // For each service, fetch individual sessions and create one Activity per session
     for (const service of services) {
-      const startDate = service.schedule?.firstSessionStart;
-      if (!startDate) continue;
-
-      // Map Wix service type → internal CampaignType
+      const scheduleId = service.schedule?.id;
+      const serviceName = str(service.name) || 'Untitled';
       const serviceType = (service as any).type;
       const campaignType = serviceType === 'CLASS' ? 'class' : 'workshop';
+      const imageUrl = resolveWixImageUrl(service.media?.mainMedia?.image?.url);
+      const sourceUrl = service.urls?.bookingPageUrl || service.urls?.servicePage?.url;
 
-      activities.push({
-        id: service.id || uuidv4(),
-        title: str(service.name) || `Untitled ${serviceType === 'CLASS' ? 'Class' : 'Course'}`,
-        description: str(service.description),
-        startDate,
-        endDate: service.schedule?.lastSessionEnd || undefined,
-        location: undefined,
-        imageUrl: resolveWixImageUrl(service.media?.mainMedia?.image?.url),
-        sourceUrl:
-          service.urls?.bookingPageUrl ||
-          service.urls?.servicePage?.url,
-        source: 'wix-booking',
-        type: campaignType,
-        selected: false,
-      });
+      if (scheduleId) {
+        // Query individual sessions from Calendar V3
+        const sessions = await querySessionsForSchedule(options, scheduleId, fromDate, toDate);
+
+        if (sessions.length > 1) {
+          // Multi-session: create one activity per session
+          sessions.sort((a, b) => {
+            const aTime = a.start?.timestamp ? new Date(a.start.timestamp).getTime() : 0;
+            const bTime = b.start?.timestamp ? new Date(b.start.timestamp).getTime() : 0;
+            return aTime - bTime;
+          });
+
+          sessions.forEach((session, index) => {
+            const sessionStart = session.start?.timestamp;
+            if (!sessionStart) return;
+
+            activities.push({
+              id: session.id || `${service.id}-session-${index}`,
+              title: `${serviceName} (Session ${index + 1}/${sessions.length})`,
+              description: str(service.description),
+              startDate: sessionStart,
+              endDate: session.end?.timestamp || undefined,
+              location: undefined,
+              imageUrl,
+              sourceUrl,
+              source: 'wix-booking',
+              type: campaignType,
+              selected: false,
+            });
+          });
+        } else if (sessions.length === 1) {
+          // Single session
+          const session = sessions[0];
+          activities.push({
+            id: session.id || service.id || uuidv4(),
+            title: serviceName,
+            description: str(service.description),
+            startDate: session.start?.timestamp || service.schedule?.firstSessionStart || new Date().toISOString(),
+            endDate: session.end?.timestamp || undefined,
+            location: undefined,
+            imageUrl,
+            sourceUrl,
+            source: 'wix-booking',
+            type: campaignType,
+            selected: false,
+          });
+        } else {
+          // No sessions returned — fall back to service metadata
+          const startDate = service.schedule?.firstSessionStart;
+          if (!startDate) continue;
+          activities.push({
+            id: service.id || uuidv4(),
+            title: serviceName,
+            description: str(service.description),
+            startDate,
+            endDate: service.schedule?.lastSessionEnd || undefined,
+            location: undefined,
+            imageUrl,
+            sourceUrl,
+            source: 'wix-booking',
+            type: campaignType,
+            selected: false,
+          });
+        }
+      } else {
+        // No schedule ID — use service-level dates
+        const startDate = service.schedule?.firstSessionStart;
+        if (!startDate) continue;
+        activities.push({
+          id: service.id || uuidv4(),
+          title: serviceName,
+          description: str(service.description),
+          startDate,
+          endDate: service.schedule?.lastSessionEnd || undefined,
+          location: undefined,
+          imageUrl,
+          sourceUrl,
+          source: 'wix-booking',
+          type: campaignType,
+          selected: false,
+        });
+      }
     }
 
-    // Exclude recurring/drop-in activities that don't need marketing
+    // Exclude recurring/drop-in activities
     const excludePrefixes = ['online', 'drop in'];
     const filtered = activities.filter((a) => {
       const lower = a.title.toLowerCase();
       return !excludePrefixes.some((prefix) => lower.startsWith(prefix));
     });
 
-    // Sort by start date (first session)
+    // Sort by start date
     filtered.sort(
       (a, b) =>
         new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
