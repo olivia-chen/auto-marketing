@@ -73,26 +73,38 @@ export async function GET(req: NextRequest) {
       const sourceUrl = service.urls?.bookingPageUrl || service.urls?.servicePage?.url;
 
       if (scheduleId) {
-        // Query individual sessions from Calendar V3
-        console.log(`[Sessions] Querying sessions for "${serviceName}" scheduleId=${scheduleId} from=${fromDate} to=${toDate}`);
-        const sessions = await querySessionsForSchedule(options, scheduleId, fromDate, toDate);
-        console.log(`[Sessions] Got ${sessions.length} sessions for "${serviceName}"`, sessions.length > 0 ? JSON.stringify(sessions[0]).slice(0, 200) : 'EMPTY');
+        // Query ALL sessions for this service to get correct total count and numbering
+        const allSessionsFrom = service.schedule?.firstSessionStart?.split('T')[0] || '2020-01-01';
+        const allSessionsTo = service.schedule?.lastSessionEnd?.split('T')[0] || '2030-12-31';
+        console.log(`[Sessions] Querying ALL sessions for "${serviceName}" scheduleId=${scheduleId} from=${allSessionsFrom} to=${allSessionsTo}`);
+        const allSessions = await querySessionsForSchedule(options, scheduleId, allSessionsFrom, allSessionsTo);
 
-        if (sessions.length > 1) {
-          // Multi-session: create one activity per session
-          sessions.sort((a, b) => {
-            const aTime = getEventStartDate(a) ? new Date(getEventStartDate(a)!).getTime() : 0;
-            const bTime = getEventStartDate(b) ? new Date(getEventStartDate(b)!).getTime() : 0;
-            return aTime - bTime;
-          });
+        // Sort all sessions chronologically
+        allSessions.sort((a, b) => {
+          const aTime = getEventStartDate(a) ? new Date(getEventStartDate(a)!).getTime() : 0;
+          const bTime = getEventStartDate(b) ? new Date(getEventStartDate(b)!).getTime() : 0;
+          return aTime - bTime;
+        });
 
-          sessions.forEach((session, index) => {
+        const totalSessions = allSessions.length;
+        console.log(`[Sessions] Got ${totalSessions} total sessions for "${serviceName}"`);
+
+        // Filter to only sessions within the requested date range
+        const fromTimestamp = new Date(`${fromDate}T00:00:00.000Z`).getTime();
+        const toTimestamp = new Date(`${toDate}T23:59:59.000Z`).getTime();
+
+        if (totalSessions > 1) {
+          allSessions.forEach((session, index) => {
             const sessionStart = getEventStartDate(session);
             if (!sessionStart) return;
 
+            // Check if this session falls within the requested date range
+            const sessionTime = new Date(sessionStart).getTime();
+            if (sessionTime < fromTimestamp || sessionTime > toTimestamp) return;
+
             activities.push({
               id: session.id || `${service.id}-session-${index}`,
-              title: `${serviceName} (Session ${index + 1}/${sessions.length})`,
+              title: `${serviceName} (Session ${index + 1}/${totalSessions})`,
               description: str(service.description),
               startDate: sessionStart,
               endDate: getEventEndDate(session) || undefined,
@@ -104,9 +116,9 @@ export async function GET(req: NextRequest) {
               selected: false,
             });
           });
-        } else if (sessions.length === 1) {
+        } else if (allSessions.length === 1) {
           // Single session
-          const session = sessions[0];
+          const session = allSessions[0];
           activities.push({
             id: session.id || service.id || uuidv4(),
             title: serviceName,
