@@ -256,10 +256,30 @@ export interface WixCalendarEvent {
   id: string;
   scheduleId?: string;
   title?: string;
-  start?: { timestamp?: string; localDate?: { year?: number; monthOfYear?: number; dayOfMonth?: number; hourOfDay?: number; minutesOfHour?: number } };
-  end?: { timestamp?: string };
+  start?: {
+    timestamp?: string;
+    utcDate?: string;
+    localDate?: string;
+    timeZone?: string;
+  };
+  end?: {
+    timestamp?: string;
+    utcDate?: string;
+    localDate?: string;
+  };
   type?: string;
   status?: string;
+}
+
+/**
+ * Get the effective start datetime string from a calendar event.
+ */
+export function getEventStartDate(event: WixCalendarEvent): string | undefined {
+  return event.start?.utcDate || event.start?.timestamp || event.start?.localDate;
+}
+
+export function getEventEndDate(event: WixCalendarEvent): string | undefined {
+  return event.end?.utcDate || event.end?.timestamp || event.end?.localDate;
 }
 
 /**
@@ -273,16 +293,21 @@ export async function querySessionsForSchedule(
   toDate: string
 ): Promise<WixCalendarEvent[]> {
   try {
+    // Calendar V3 requires local date-time format (no Z suffix)
+    const fromLocal = `${fromDate}T00:00:00.000`;
+    const toLocal = `${toDate}T23:59:59.000`;
+
     const data = await wixFetch('/calendar/v3/events/query', options, {
       query: {
         filter: {
           scheduleId: { $eq: scheduleId },
         },
+        paging: { limit: 100 },
       },
-      fromLocalDate: `${fromDate}T00:00:00.000Z`,
-      toLocalDate: `${toDate}T23:59:59.000Z`,
+      fromLocalDate: fromLocal,
+      toLocalDate: toLocal,
     });
-    console.log(`[Calendar V3] Raw response for schedule ${scheduleId}:`, JSON.stringify(data).slice(0, 500));
+    console.log(`[Calendar V3] Raw response for schedule ${scheduleId}: ${(data.events || []).length} events`);
     const allEvents = data.events || [];
     const filtered = allEvents.filter(
       (e: WixCalendarEvent) => e.type !== 'WORKING_HOURS' && e.status !== 'CANCELLED'
@@ -294,3 +319,4 @@ export async function querySessionsForSchedule(
     return [];
   }
 }
+

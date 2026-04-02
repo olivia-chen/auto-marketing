@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { queryFutureCourses, querySessionsForSchedule } from '@/lib/wix-client';
+import { queryFutureCourses, querySessionsForSchedule, getEventStartDate, getEventEndDate } from '@/lib/wix-client';
 import { Activity } from '@/lib/types';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -81,13 +81,13 @@ export async function GET(req: NextRequest) {
         if (sessions.length > 1) {
           // Multi-session: create one activity per session
           sessions.sort((a, b) => {
-            const aTime = a.start?.timestamp ? new Date(a.start.timestamp).getTime() : 0;
-            const bTime = b.start?.timestamp ? new Date(b.start.timestamp).getTime() : 0;
+            const aTime = getEventStartDate(a) ? new Date(getEventStartDate(a)!).getTime() : 0;
+            const bTime = getEventStartDate(b) ? new Date(getEventStartDate(b)!).getTime() : 0;
             return aTime - bTime;
           });
 
           sessions.forEach((session, index) => {
-            const sessionStart = session.start?.timestamp;
+            const sessionStart = getEventStartDate(session);
             if (!sessionStart) return;
 
             activities.push({
@@ -95,7 +95,7 @@ export async function GET(req: NextRequest) {
               title: `${serviceName} (Session ${index + 1}/${sessions.length})`,
               description: str(service.description),
               startDate: sessionStart,
-              endDate: session.end?.timestamp || undefined,
+              endDate: getEventEndDate(session) || undefined,
               location: undefined,
               imageUrl,
               sourceUrl,
@@ -111,8 +111,8 @@ export async function GET(req: NextRequest) {
             id: session.id || service.id || uuidv4(),
             title: serviceName,
             description: str(service.description),
-            startDate: session.start?.timestamp || service.schedule?.firstSessionStart || new Date().toISOString(),
-            endDate: session.end?.timestamp || undefined,
+            startDate: getEventStartDate(session) || service.schedule?.firstSessionStart || new Date().toISOString(),
+            endDate: getEventEndDate(session) || undefined,
             location: undefined,
             imageUrl,
             sourceUrl,
