@@ -932,11 +932,30 @@ export default function Home() {
   };
 
   // ── Google Drive: trigger file picker for in-app upload ──
-  const triggerUpload = async (activityId: string, activity: Activity) => {
-    // First ensure we have the folder
+  // Store the activity info for when files are selected
+  const uploadActivityDataRef = useRef<Activity | null>(null);
+
+  const triggerUpload = (activityId: string, activity: Activity) => {
+    // Open file picker SYNCHRONOUSLY to preserve user gesture (avoids iOS blocker)
+    uploadActivityRef.current = activityId;
+    uploadActivityDataRef.current = activity;
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    const activityId = uploadActivityRef.current;
+    const activity = uploadActivityDataRef.current;
+    if (!files || files.length === 0 || !activityId || !activity) return;
+
+    // Resolve the Drive folder (create if needed)
     let folder = driveFolders[activityId];
     if (!folder) {
-      setLoadingDriveFolder(activityId);
+      setUploadingMedia(activityId);
+      setUploadProgress({ current: 0, total: files.length });
       try {
         const res = await fetch('/api/drive/folders', {
           method: 'POST',
@@ -949,34 +968,16 @@ export default function Home() {
         setDriveFolders(prev => ({ ...prev, [activityId]: data }));
       } catch (err: any) {
         setError(err.message);
-        setLoadingDriveFolder(null);
+        setUploadingMedia(null);
+        setUploadProgress({ current: 0, total: 0 });
         return;
-      } finally {
-        setLoadingDriveFolder(null);
       }
-    }
-    // Open file picker
-    uploadActivityRef.current = activityId;
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-      fileInputRef.current.click();
-    }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    const activityId = uploadActivityRef.current;
-    if (!files || files.length === 0 || !activityId) return;
-
-    const folder = driveFolders[activityId];
-    if (!folder) {
-      setError('No folder found for this activity');
-      return;
+    } else {
+      setUploadingMedia(activityId);
+      setUploadProgress({ current: 0, total: files.length });
     }
 
-    setUploadingMedia(activityId);
-    setUploadProgress({ current: 0, total: files.length });
-
+    // Upload files
     try {
       for (let i = 0; i < files.length; i++) {
         setUploadProgress({ current: i + 1, total: files.length });
@@ -1004,6 +1005,7 @@ export default function Home() {
       setUploadingMedia(null);
       setUploadProgress({ current: 0, total: 0 });
       uploadActivityRef.current = null;
+      uploadActivityDataRef.current = null;
     }
   };
 
