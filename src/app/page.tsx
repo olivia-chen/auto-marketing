@@ -2285,26 +2285,8 @@ export default function Home() {
                               View in Drive
                             </Button>
                           </div>
-                          {/* Post schedule + Context toggle row */}
-                          <div className="flex items-center justify-between mt-2 gap-2">
-                            {postCount > 0 && (
-                              <div className="flex flex-wrap gap-1 flex-1">
-                                {scheduledPosts
-                                  .filter((p) => p.activityId === activity.id)
-                                  .map((p) => {
-                                    const ac = ANGLE_CONFIG[p.angle];
-                                    return (
-                                      <span
-                                        key={p.id}
-                                        className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${ac.color}`}
-                                      >
-                                        {ac.emoji} {p.postDate.slice(5)} @ {p.postTime}
-                                      </span>
-                                    );
-                                  })}
-                              </div>
-                            )}
-                            {/* Context Toggle Button */}
+                          {/* Context toggle row */}
+                          <div className="flex items-center justify-end mt-2 gap-2">
                             <Button
                               variant={isContextOpen ? 'default' : 'outline'}
                               size="sm"
