@@ -883,6 +883,8 @@ export default function Home() {
 
   // ── Google Drive: open/create activity folder ──
   const openDriveFolder = async (activity: Activity) => {
+    // Open window synchronously (before await) to avoid iOS Safari popup blocker
+    const newWindow = window.open('about:blank', '_blank');
     setLoadingDriveFolder(activity.id);
     try {
       const res = await fetch('/api/drive/folders', {
@@ -893,9 +895,15 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create folder');
       setDriveFolders(prev => ({ ...prev, [activity.id]: data }));
-      window.open(data.folderUrl, '_blank');
+      if (newWindow) {
+        newWindow.location.href = data.folderUrl;
+      } else {
+        // Fallback if popup was still blocked
+        window.location.href = data.folderUrl;
+      }
     } catch (err: any) {
       setError(err.message);
+      if (newWindow) newWindow.close();
     } finally {
       setLoadingDriveFolder(null);
     }
