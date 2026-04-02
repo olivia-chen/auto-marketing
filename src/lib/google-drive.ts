@@ -226,3 +226,39 @@ export async function listFolderFiles(folderId: string) {
 }
 
 export type DriveFile = Awaited<ReturnType<typeof listFolderFiles>>[number];
+
+/**
+ * Upload a file (buffer) to a specific Drive folder.
+ */
+export async function uploadFileToDrive(
+  folderId: string,
+  fileName: string,
+  mimeType: string,
+  fileBuffer: Buffer
+) {
+  const auth = getDriveAuth();
+  if (!auth) throw new Error('Google Drive not configured');
+
+  const drive = google.drive({ version: 'v3', auth });
+  const { Readable } = require('stream');
+
+  const res = await drive.files.create({
+    requestBody: {
+      name: fileName,
+      parents: [folderId],
+    },
+    media: {
+      mimeType,
+      body: Readable.from(fileBuffer),
+    },
+    fields: 'id, name, webViewLink, thumbnailLink',
+    supportsAllDrives: true,
+  });
+
+  return {
+    id: res.data.id!,
+    name: res.data.name || fileName,
+    viewUrl: res.data.webViewLink || null,
+    thumbnailUrl: res.data.thumbnailLink || null,
+  };
+}

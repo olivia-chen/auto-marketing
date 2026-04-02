@@ -229,6 +229,10 @@ export default function Home() {
   const [driveFiles, setDriveFiles] = useState<Record<string, DriveFileInfo[]>>({});
   const [loadingDriveFolder, setLoadingDriveFolder] = useState<string | null>(null);
   const [loadingDriveFiles, setLoadingDriveFiles] = useState<string | null>(null);
+  const [uploadingMedia, setUploadingMedia] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadActivityRef = useRef<string | null>(null);
 
   // Wix blog publish state
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
@@ -927,6 +931,82 @@ export default function Home() {
     }
   };
 
+  // ── Google Drive: trigger file picker for in-app upload ──
+  const triggerUpload = async (activityId: string, activity: Activity) => {
+    // First ensure we have the folder
+    let folder = driveFolders[activityId];
+    if (!folder) {
+      setLoadingDriveFolder(activityId);
+      try {
+        const res = await fetch('/api/drive/folders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ activityTitle: activity.title, startDate: activity.startDate }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to create folder');
+        folder = data;
+        setDriveFolders(prev => ({ ...prev, [activityId]: data }));
+      } catch (err: any) {
+        setError(err.message);
+        setLoadingDriveFolder(null);
+        return;
+      } finally {
+        setLoadingDriveFolder(null);
+      }
+    }
+    // Open file picker
+    uploadActivityRef.current = activityId;
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    const activityId = uploadActivityRef.current;
+    if (!files || files.length === 0 || !activityId) return;
+
+    const folder = driveFolders[activityId];
+    if (!folder) {
+      setError('No folder found for this activity');
+      return;
+    }
+
+    setUploadingMedia(activityId);
+    setUploadProgress({ current: 0, total: files.length });
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        setUploadProgress({ current: i + 1, total: files.length });
+        const formData = new FormData();
+        formData.append('folderId', folder.folderId);
+        formData.append('files', files[i]);
+
+        const res = await fetch('/api/drive/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || `Failed to upload ${files[i].name}`);
+        }
+      }
+
+      // Success notification
+      setError(null);
+      alert(`✅ ${files.length} file${files.length > 1 ? 's' : ''} uploaded successfully!`);
+    } catch (err: any) {
+      setError(`Upload failed: ${err.message}`);
+    } finally {
+      setUploadingMedia(null);
+      setUploadProgress({ current: 0, total: 0 });
+      uploadActivityRef.current = null;
+    }
+  };
+
   // ── Google Drive: load media files from folder ──
   const loadDriveMedia = async (activity: Activity) => {
     const folder = driveFolders[activity.id];
@@ -1000,6 +1080,15 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-teal-50/30 to-emerald-50/20 font-sans">
+      {/* Hidden file input for photo upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={handleFileUpload}
+      />
       {/* Top Header Bar */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-teal-200/60 shadow-sm">
         <div className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-8 py-2 sm:py-3 flex flex-row justify-between items-center gap-2 sm:gap-3">
@@ -2169,17 +2258,31 @@ export default function Home() {
                             <Button
                               variant="outline"
                               size="sm"
-                              className="h-7 text-[10px] sm:text-xs gap-1 sm:gap-1.5 border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
-                              onClick={() => openDriveFolder(activity)}
-                              disabled={loadingDriveFolder === activity.id}
+                              className="h-7 text-[10px] sm:text-xs gap-1 sm:gap-1.5 border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 hover:text-teal-800"
+                              onClick={() => triggerUpload(activity.id, activity)}
+                              disabled={uploadingMedia === activity.id || loadingDriveFolder === activity.id}
                             >
-                              {loadingDriveFolder === activity.id ? (
+                              {uploadingMedia === activity.id ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  {uploadProgress.current}/{uploadProgress.total}
+                                </>
+                              ) : loadingDriveFolder === activity.id ? (
                                 <Loader2 className="h-3 w-3 animate-spin" />
                               ) : (
                                 <Upload className="h-3 w-3" />
                               )}
-                              Upload/View Media
-                              <ExternalLink className="h-2.5 w-2.5 opacity-50" />
+                              Upload Photos
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[10px] sm:text-xs gap-1 sm:gap-1.5 border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700"
+                              onClick={() => openDriveFolder(activity)}
+                              disabled={loadingDriveFolder === activity.id}
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              View in Drive
                             </Button>
                           </div>
                           {/* Post schedule + Context toggle row */}
