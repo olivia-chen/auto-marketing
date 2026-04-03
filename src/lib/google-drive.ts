@@ -194,6 +194,47 @@ export async function getActivityFolder(activityTitle: string, startDate: string
 }
 
 /**
+ * Get (or create) the "0-Other" folder under the root Photos folder.
+ */
+export async function getOtherFolder() {
+  const auth = getDriveAuth();
+  if (!auth) throw new Error('Google Drive not configured');
+
+  const drive = google.drive({ version: 'v3', auth });
+
+  let root: { id: string; webViewLink: string };
+  let sharedDriveId: string | undefined;
+
+  if (ROOT_FOLDER_ID) {
+    try {
+      const fileInfo = await drive.files.get({
+        fileId: ROOT_FOLDER_ID,
+        fields: 'id,name,driveId',
+        supportsAllDrives: true,
+      });
+      sharedDriveId = fileInfo.data.driveId || undefined;
+    } catch (verifyErr: any) {
+      throw verifyErr;
+    }
+    root = {
+      id: ROOT_FOLDER_ID,
+      webViewLink: `https://drive.google.com/drive/folders/${ROOT_FOLDER_ID}`,
+    };
+  } else {
+    root = await getOrCreateFolder(drive, ROOT_FOLDER_NAME);
+  }
+
+  const otherFolder = await getOrCreateFolder(drive, '0-Other', root.id, sharedDriveId);
+
+  return {
+    folderId: otherFolder.id,
+    folderUrl: `https://drive.google.com/drive/folders/${otherFolder.id}`,
+    folderName: '0-Other',
+    path: 'Photos/0-Other',
+  };
+}
+
+/**
  * List image/video files in a Drive folder.
  */
 export async function listFolderFiles(folderId: string) {

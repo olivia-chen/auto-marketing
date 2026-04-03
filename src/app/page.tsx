@@ -234,6 +234,11 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadActivityRef = useRef<string | null>(null);
 
+  // "Other" upload state
+  const [uploadingOther, setUploadingOther] = useState(false);
+  const [otherUploadProgress, setOtherUploadProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+  const otherFileInputRef = useRef<HTMLInputElement>(null);
+
   // Wix blog publish state
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
   const [publishedPosts, setPublishedPosts] = useState<Record<string, { url: string }>>({});
@@ -1009,6 +1014,53 @@ export default function Home() {
     }
   };
 
+  // ── Google Drive: "Other" upload ──
+  const triggerOtherUpload = () => {
+    if (otherFileInputRef.current) {
+      otherFileInputRef.current.value = '';
+      otherFileInputRef.current.click();
+    }
+  };
+
+  const handleOtherFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploadingOther(true);
+    setOtherUploadProgress({ current: 0, total: files.length });
+
+    try {
+      // Get/create the 0-Other folder
+      const folderRes = await fetch('/api/drive/other-folder', { method: 'POST' });
+      const folderData = await folderRes.json();
+      if (!folderRes.ok) throw new Error(folderData.error || 'Failed to get 0-Other folder');
+
+      for (let i = 0; i < files.length; i++) {
+        setOtherUploadProgress({ current: i + 1, total: files.length });
+        const formData = new FormData();
+        formData.append('folderId', folderData.folderId);
+        formData.append('files', files[i]);
+
+        const res = await fetch('/api/drive/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || `Failed to upload ${files[i].name}`);
+        }
+      }
+
+      alert(`✅ ${files.length} file${files.length > 1 ? 's' : ''} uploaded to 0-Other!`);
+    } catch (err: any) {
+      setError(`Upload failed: ${err.message}`);
+    } finally {
+      setUploadingOther(false);
+      setOtherUploadProgress({ current: 0, total: 0 });
+    }
+  };
+
   // ── Google Drive: load media files from folder ──
   const loadDriveMedia = async (activity: Activity) => {
     const folder = driveFolders[activity.id];
@@ -1090,6 +1142,14 @@ export default function Home() {
         multiple
         className="hidden"
         onChange={handleFileUpload}
+      />
+      <input
+        ref={otherFileInputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={handleOtherFileUpload}
       />
       {/* Top Header Bar */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-teal-200/60 shadow-sm">
@@ -2148,21 +2208,40 @@ export default function Home() {
 
           {/* ─── ACTIVITIES TAB ──────────────────────────────────── */}
           <TabsContent value="activities" className="mt-6 space-y-4">
-            <div className="flex items-center justify-between bg-white rounded-xl p-4 shadow-sm border border-slate-200/60">
-              <h2 className="text-lg font-semibold text-slate-800">
+            <div className="flex items-center justify-between bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-slate-200/60">
+              <h2 className="text-base sm:text-lg font-semibold text-slate-800">
                 Source Events & Bookings
               </h2>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={fetchActivities}
-                disabled={isLoadingActivities}
-              >
-                <RefreshCw
-                  className={`h-4 w-4 ${isLoadingActivities ? 'animate-spin' : ''}`}
-                />
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-[10px] sm:text-xs gap-1 sm:gap-1.5 border-orange-200 text-orange-600 bg-orange-50 hover:bg-orange-100 hover:text-orange-700"
+                  onClick={triggerOtherUpload}
+                  disabled={uploadingOther}
+                >
+                  {uploadingOther ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {otherUploadProgress.current}/{otherUploadProgress.total}
+                    </>
+                  ) : (
+                    <Upload className="h-3 w-3" />
+                  )}
+                  Upload Other Photos
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={fetchActivities}
+                  disabled={isLoadingActivities}
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${isLoadingActivities ? 'animate-spin' : ''}`}
+                  />
+                </Button>
+              </div>
             </div>
 
             {activities.length === 0 ? (
