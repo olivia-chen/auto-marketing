@@ -134,6 +134,21 @@ function getSourceBadge(source: Activity['source']) {
   }
 }
 
+/** Convert a File to base64 string (iOS-safe, avoids FormData issues) */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Strip the data URL prefix (e.g. "data:image/jpeg;base64,")
+      const base64 = result.split(',')[1] || result;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 // ─── Main Component ───────────────────────────────────────────────
 
 export default function Home() {
@@ -986,18 +1001,23 @@ export default function Home() {
     try {
       for (let i = 0; i < files.length; i++) {
         setUploadProgress({ current: i + 1, total: files.length });
-        const formData = new FormData();
-        formData.append('folderId', folder.folderId);
-        formData.append('files', files[i]);
+        const file = files[i];
+        const base64 = await fileToBase64(file);
 
         const res = await fetch('/api/drive/upload', {
           method: 'POST',
-          body: formData,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            folderId: folder.folderId,
+            fileName: file.name || `photo-${Date.now()}.jpg`,
+            mimeType: file.type || 'image/jpeg',
+            fileData: base64,
+          }),
         });
 
         if (!res.ok) {
           const data = await res.json();
-          throw new Error(data.error || `Failed to upload ${files[i].name}`);
+          throw new Error(data.error || `Failed to upload ${file.name}`);
         }
       }
 
@@ -1037,18 +1057,23 @@ export default function Home() {
 
       for (let i = 0; i < files.length; i++) {
         setOtherUploadProgress({ current: i + 1, total: files.length });
-        const formData = new FormData();
-        formData.append('folderId', folderData.folderId);
-        formData.append('files', files[i]);
+        const file = files[i];
+        const base64 = await fileToBase64(file);
 
         const res = await fetch('/api/drive/upload', {
           method: 'POST',
-          body: formData,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            folderId: folderData.folderId,
+            fileName: file.name || `photo-${Date.now()}.jpg`,
+            mimeType: file.type || 'image/jpeg',
+            fileData: base64,
+          }),
         });
 
         if (!res.ok) {
           const data = await res.json();
-          throw new Error(data.error || `Failed to upload ${files[i].name}`);
+          throw new Error(data.error || `Failed to upload ${file.name}`);
         }
       }
 

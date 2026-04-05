@@ -1,53 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { uploadFileToDrive } from '@/lib/google-drive';
 
+// Allow large file uploads (base64 photos can be 15MB+)
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/drive/upload
- * Accepts multipart form data with:
+ * Accepts JSON body with:
  *   - folderId: string
- *   - files: File[] (one or more)
+ *   - fileName: string
+ *   - mimeType: string
+ *   - fileData: string (base64-encoded)
  * 
- * Uploads each file to the specified Google Drive folder.
+ * Uploads the file to the specified Google Drive folder.
+ * Uses JSON instead of FormData to avoid iOS Safari parsing issues.
  */
 export async function POST(req: NextRequest) {
   try {
-    const formData = await req.formData();
-    const folderId = formData.get('folderId') as string;
+    const body = await req.json();
+    const { folderId, fileName, mimeType, fileData } = body;
 
     if (!folderId) {
       return NextResponse.json({ error: 'folderId is required' }, { status: 400 });
     }
-
-    const files = formData.getAll('files') as File[];
-    if (files.length === 0) {
-      return NextResponse.json({ error: 'At least one file is required' }, { status: 400 });
+    if (!fileData) {
+      return NextResponse.json({ error: 'fileData is required' }, { status: 400 });
     }
 
-    const results = [];
-    for (const file of files) {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      const result = await uploadFileToDrive(
-        folderId,
-        file.name,
-        file.type || 'application/octet-stream',
-        buffer
-      );
-      results.push(result);
-    }
+    const buffer = Buffer.from(fileData, 'base64');
+    const safeName = fileName || `upload-${Date.now()}.jpg`;
+    const safeMime = mimeType || 'application/octet-stream';
 
-    return NextResponse.json({ uploaded: results, count: results.length });
+    const result = await uploadFileToDrive(folderId, safeName, safeMime, buffer);
+
+    return NextResponse.json({ uploaded: result });
   } catch (error: any) {
     console.error('Drive upload error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to upload files' },
+      { error: error.message || 'Failed to upload file' },
       { status: 500 }
     );
   }
 }
-
-// Increase body size limit for file uploads
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
