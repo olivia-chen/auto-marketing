@@ -134,18 +134,56 @@ function getSourceBadge(source: Activity['source']) {
   }
 }
 
-/** Convert a File to base64 string (iOS-safe, avoids FormData issues) */
-function fileToBase64(file: File): Promise<string> {
+/** Compress an image file client-side, return { base64, mimeType, fileName } */
+function compressAndConvert(file: File): Promise<{ base64: string; mimeType: string; fileName: string }> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      // Strip the data URL prefix (e.g. "data:image/jpeg;base64,")
-      const base64 = result.split(',')[1] || result;
-      resolve(base64);
+    // For videos, just read as base64 without compression
+    if (file.type.startsWith('video/')) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve({
+          base64: result.split(',')[1] || result,
+          mimeType: file.type,
+          fileName: file.name,
+        });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    // For images, compress via canvas
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX_SIZE = 2048;
+      let { width, height } = img;
+      if (width > MAX_SIZE || height > MAX_SIZE) {
+        const ratio = Math.min(MAX_SIZE / width, MAX_SIZE / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+      const base64 = dataUrl.split(',')[1] || dataUrl;
+      const baseName = file.name.replace(/\.[^.]+$/, '');
+      resolve({
+        base64,
+        mimeType: 'image/jpeg',
+        fileName: `${baseName}.jpg`,
+      });
     };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load image for compression'));
+    };
+    img.src = url;
   });
 }
 
@@ -1002,16 +1040,16 @@ export default function Home() {
       for (let i = 0; i < files.length; i++) {
         setUploadProgress({ current: i + 1, total: files.length });
         const file = files[i];
-        const base64 = await fileToBase64(file);
+        const compressed = await compressAndConvert(file);
 
         const res = await fetch('/api/drive/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             folderId: folder.folderId,
-            fileName: file.name || `photo-${Date.now()}.jpg`,
-            mimeType: file.type || 'image/jpeg',
-            fileData: base64,
+            fileName: compressed.fileName,
+            mimeType: compressed.mimeType,
+            fileData: compressed.base64,
           }),
         });
 
@@ -1058,16 +1096,16 @@ export default function Home() {
       for (let i = 0; i < files.length; i++) {
         setOtherUploadProgress({ current: i + 1, total: files.length });
         const file = files[i];
-        const base64 = await fileToBase64(file);
+        const compressed = await compressAndConvert(file);
 
         const res = await fetch('/api/drive/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             folderId: folderData.folderId,
-            fileName: file.name || `photo-${Date.now()}.jpg`,
-            mimeType: file.type || 'image/jpeg',
-            fileData: base64,
+            fileName: compressed.fileName,
+            mimeType: compressed.mimeType,
+            fileData: compressed.base64,
           }),
         });
 
