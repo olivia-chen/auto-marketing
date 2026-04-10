@@ -51,6 +51,7 @@ import {
   Table2,
   Share2,
   LogOut,
+  Search,
 } from 'lucide-react';
 import {
   Activity,
@@ -291,6 +292,17 @@ export default function Home() {
   const [uploadingOther, setUploadingOther] = useState(false);
   const [otherUploadProgress, setOtherUploadProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const otherFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Activity search
+  const [activitySearch, setActivitySearch] = useState('');
+  const filteredActivities = useMemo(() => {
+    if (!activitySearch.trim()) return activities;
+    const q = activitySearch.toLowerCase().trim();
+    return activities.filter(a =>
+      a.title.toLowerCase().includes(q) ||
+      (a.description && a.description.toLowerCase().includes(q))
+    );
+  }, [activities, activitySearch]);
 
   // Wix blog publish state
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
@@ -2271,39 +2283,58 @@ export default function Home() {
 
           {/* ─── ACTIVITIES TAB ──────────────────────────────────── */}
           <TabsContent value="activities" className="mt-6 space-y-4">
-            <div className="flex items-center justify-between bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-slate-200/60">
-              <h2 className="text-base sm:text-lg font-semibold text-slate-800">
-                Source Events & Bookings
-              </h2>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-[10px] sm:text-xs gap-1 sm:gap-1.5 border-orange-200 text-orange-600 bg-orange-50 hover:bg-orange-100 hover:text-orange-700"
-                  onClick={triggerOtherUpload}
-                  disabled={uploadingOther}
-                >
-                  {uploadingOther ? (
-                    <>
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      {otherUploadProgress.current}/{otherUploadProgress.total}
-                    </>
-                  ) : (
-                    <Upload className="h-3 w-3" />
-                  )}
-                  Upload Other Photos
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={fetchActivities}
-                  disabled={isLoadingActivities}
-                >
-                  <RefreshCw
-                    className={`h-4 w-4 ${isLoadingActivities ? 'animate-spin' : ''}`}
-                  />
-                </Button>
+            <div className="bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-slate-200/60 space-y-2">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base sm:text-lg font-semibold text-slate-800">
+                  Source Events & Bookings
+                </h2>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-[10px] sm:text-xs gap-1 sm:gap-1.5 border-orange-200 text-orange-600 bg-orange-50 hover:bg-orange-100 hover:text-orange-700"
+                    onClick={triggerOtherUpload}
+                    disabled={uploadingOther}
+                  >
+                    {uploadingOther ? (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        {otherUploadProgress.current}/{otherUploadProgress.total}
+                      </>
+                    ) : (
+                      <Upload className="h-3 w-3" />
+                    )}
+                    Upload Other Photos
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={fetchActivities}
+                    disabled={isLoadingActivities}
+                  >
+                    <RefreshCw
+                      className={`h-4 w-4 ${isLoadingActivities ? 'animate-spin' : ''}`}
+                    />
+                  </Button>
+                </div>
+              </div>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                <Input
+                  placeholder="Search activities..."
+                  value={activitySearch}
+                  onChange={(e) => setActivitySearch(e.target.value)}
+                  className="h-8 pl-8 text-sm bg-slate-50 border-slate-200 focus:bg-white"
+                />
+                {activitySearch && (
+                  <button
+                    onClick={() => setActivitySearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2315,7 +2346,7 @@ export default function Home() {
               </div>
             ) : (
               <div className="grid gap-3">
-                {activities.map((activity) => {
+                {filteredActivities.map((activity) => {
                   const badge = getSourceBadge(activity.source);
                   const postCount = scheduledPosts.filter(
                     (p) => p.activityId === activity.id
