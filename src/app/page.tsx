@@ -448,17 +448,17 @@ export default function Home() {
     });
   };
 
-  // Fetch activities from Wix — pull future month so T-14/T-7 posts land on current weeks
+  // Fetch activities from Wix — pull from 2 weeks ago through far future
   const fetchActivities = useCallback(async () => {
     setIsLoadingActivities(true);
     setError(null);
 
-    // Always fetch from today through +30 days to cover all scheduling offsets
-    const today = format(new Date(), 'yyyy-MM-dd');
-    const futureEnd = format(addDays(new Date(), 30), 'yyyy-MM-dd');
+    // Fetch from 14 days ago (for recap/past events) through +90 days
+    const fromDate = format(addDays(new Date(), -14), 'yyyy-MM-dd');
+    const futureEnd = format(addDays(new Date(), 90), 'yyyy-MM-dd');
 
     try {
-      const res = await fetch(`/api/wix/activities?from=${today}&to=${futureEnd}`);
+      const res = await fetch(`/api/wix/activities?from=${fromDate}&to=${futureEnd}`);
       const data = await res.json();
 
       if (!res.ok) {
