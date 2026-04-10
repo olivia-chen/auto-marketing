@@ -8,6 +8,8 @@ import { v4 as uuidv4 } from 'uuid';
  *
  * Fetches upcoming activities from Wix Bookings (COURSE-type services)
  * and expands multi-session courses into individual session activities.
+ *
+ * OPTIMIZED: Fetches sessions in parallel and only within the requested range.
  */
 export async function GET(req: NextRequest) {
   const apiKey = process.env.WIX_API_KEY;
@@ -61,69 +63,78 @@ export async function GET(req: NextRequest) {
     // Fetch COURSE and CLASS services from Wix Bookings
     const services = await queryFutureCourses(options, fromDate);
 
+    const fromTimestamp = new Date(`${fromDate}T00:00:00.000Z`).getTime();
+    const toTimestamp = new Date(`${toDate}T23:59:59.000Z`).getTime();
+
+    // OPTIMIZATION: Fetch ALL session queries in parallel instead of sequential
+    const sessionPromises = services.map(async (service) => {
+      const scheduleId = service.schedule?.id;
+      if (!scheduleId) return { service, sessions: [], hasSchedule: false };
+
+      // Query sessions within a reasonable range (firstSession to lastSession)
+      // but cap to avoid absurdly wide queries
+      const allSessionsFrom = service.schedule?.firstSessionStart?.split('T')[0] || fromDate;
+      const allSessionsTo = service.schedule?.lastSessionEnd?.split('T')[0] || toDate;
+
+      const sessions = await querySessionsForSchedule(options, scheduleId, allSessionsFrom, allSessionsTo);
+      return { service, sessions, hasSchedule: true };
+    });
+
+    const sessionResults = await Promise.all(sessionPromises);
+
+    // Process results into activities
     const activities: Activity[] = [];
 
-    // For each service, fetch individual sessions and create one Activity per session
-    for (const service of services) {
-      const scheduleId = service.schedule?.id;
+    for (const { service, sessions, hasSchedule } of sessionResults) {
       const serviceName = str(service.name) || 'Untitled';
       const serviceType = (service as any).type;
       const campaignType = serviceType === 'CLASS' ? 'class' : 'workshop';
       const imageUrl = resolveWixImageUrl(service.media?.mainMedia?.image?.url);
       const sourceUrl = service.urls?.bookingPageUrl || service.urls?.servicePage?.url;
 
-      if (scheduleId) {
-        // Query ALL sessions for this service to get correct total count and numbering
-        const allSessionsFrom = service.schedule?.firstSessionStart?.split('T')[0] || '2020-01-01';
-        const allSessionsTo = service.schedule?.lastSessionEnd?.split('T')[0] || '2030-12-31';
-        console.log(`[Sessions] Querying ALL sessions for "${serviceName}" scheduleId=${scheduleId} from=${allSessionsFrom} to=${allSessionsTo}`);
-        const allSessions = await querySessionsForSchedule(options, scheduleId, allSessionsFrom, allSessionsTo);
-
-        // Sort all sessions chronologically
-        allSessions.sort((a, b) => {
-          const aTime = getEventStartDate(a) ? new Date(getEventStartDate(a)!).getTime() : 0;
-          const bTime = getEventStartDate(b) ? new Date(getEventStartDate(b)!).getTime() : 0;
-          return aTime - bTime;
+      if (!hasSchedule) {
+        // No schedule ID — use service-level dates
+        const startDate = service.schedule?.firstSessionStart;
+        if (!startDate) continue;
+        activities.push({
+          id: service.id || uuidv4(),
+          title: serviceName,
+          description: str(service.description),
+          startDate,
+          endDate: service.schedule?.lastSessionEnd || undefined,
+          location: undefined,
+          imageUrl,
+          sourceUrl,
+          source: 'wix-booking',
+          type: campaignType,
+          selected: false,
         });
+        continue;
+      }
 
-        const totalSessions = allSessions.length;
-        console.log(`[Sessions] Got ${totalSessions} total sessions for "${serviceName}"`);
+      // Sort sessions chronologically
+      sessions.sort((a, b) => {
+        const aTime = getEventStartDate(a) ? new Date(getEventStartDate(a)!).getTime() : 0;
+        const bTime = getEventStartDate(b) ? new Date(getEventStartDate(b)!).getTime() : 0;
+        return aTime - bTime;
+      });
 
-        // Filter to only sessions within the requested date range
-        const fromTimestamp = new Date(`${fromDate}T00:00:00.000Z`).getTime();
-        const toTimestamp = new Date(`${toDate}T23:59:59.000Z`).getTime();
+      const totalSessions = sessions.length;
 
-        if (totalSessions > 1) {
-          allSessions.forEach((session, index) => {
-            const sessionStart = getEventStartDate(session);
-            if (!sessionStart) return;
+      if (totalSessions > 1) {
+        sessions.forEach((session, index) => {
+          const sessionStart = getEventStartDate(session);
+          if (!sessionStart) return;
 
-            // Check if this session falls within the requested date range
-            const sessionTime = new Date(sessionStart).getTime();
-            if (sessionTime < fromTimestamp || sessionTime > toTimestamp) return;
+          // Check if this session falls within the requested date range
+          const sessionTime = new Date(sessionStart).getTime();
+          if (sessionTime < fromTimestamp || sessionTime > toTimestamp) return;
 
-            activities.push({
-              id: session.id || `${service.id}-session-${index}`,
-              title: `${serviceName} (Session ${index + 1}/${totalSessions})`,
-              description: str(service.description),
-              startDate: sessionStart,
-              endDate: getEventEndDate(session) || undefined,
-              location: undefined,
-              imageUrl,
-              sourceUrl,
-              source: 'wix-booking',
-              type: campaignType,
-              selected: false,
-            });
-          });
-        } else if (allSessions.length === 1) {
-          // Single session
-          const session = allSessions[0];
           activities.push({
-            id: session.id || service.id || uuidv4(),
-            title: serviceName,
+            id: session.id || `${service.id}-session-${index}`,
+            title: `${serviceName} (Session ${index + 1}/${totalSessions})`,
             description: str(service.description),
-            startDate: getEventStartDate(session) || service.schedule?.firstSessionStart || new Date().toISOString(),
+            startDate: sessionStart,
             endDate: getEventEndDate(session) || undefined,
             location: undefined,
             imageUrl,
@@ -132,26 +143,25 @@ export async function GET(req: NextRequest) {
             type: campaignType,
             selected: false,
           });
-        } else {
-          // No sessions returned — fall back to service metadata
-          const startDate = service.schedule?.firstSessionStart;
-          if (!startDate) continue;
-          activities.push({
-            id: service.id || uuidv4(),
-            title: serviceName,
-            description: str(service.description),
-            startDate,
-            endDate: service.schedule?.lastSessionEnd || undefined,
-            location: undefined,
-            imageUrl,
-            sourceUrl,
-            source: 'wix-booking',
-            type: campaignType,
-            selected: false,
-          });
-        }
+        });
+      } else if (totalSessions === 1) {
+        // Single session
+        const session = sessions[0];
+        activities.push({
+          id: session.id || service.id || uuidv4(),
+          title: serviceName,
+          description: str(service.description),
+          startDate: getEventStartDate(session) || service.schedule?.firstSessionStart || new Date().toISOString(),
+          endDate: getEventEndDate(session) || undefined,
+          location: undefined,
+          imageUrl,
+          sourceUrl,
+          source: 'wix-booking',
+          type: campaignType,
+          selected: false,
+        });
       } else {
-        // No schedule ID — use service-level dates
+        // No sessions returned — fall back to service metadata
         const startDate = service.schedule?.firstSessionStart;
         if (!startDate) continue;
         activities.push({

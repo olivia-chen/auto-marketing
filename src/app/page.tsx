@@ -453,8 +453,8 @@ export default function Home() {
     setIsLoadingActivities(true);
     setError(null);
 
-    // Fetch from 14 days ago (for recap/past events) through +90 days
-    const fromDate = format(addDays(new Date(), -14), 'yyyy-MM-dd');
+    // Fetch from 7 days ago (for recap/past events) through +90 days
+    const fromDate = format(addDays(new Date(), -7), 'yyyy-MM-dd');
     const futureEnd = format(addDays(new Date(), 90), 'yyyy-MM-dd');
 
     try {
