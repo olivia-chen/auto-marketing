@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { queryFutureCourses, querySessionsForSchedule, getEventStartDate, getEventEndDate } from '@/lib/wix-client';
+import { queryFutureCourses, querySessionsForSchedule, queryWixEvents, getEventStartDate, getEventEndDate, WixEvent } from '@/lib/wix-client';
 import { Activity } from '@/lib/types';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
  * GET /api/wix/activities?from=YYYY-MM-DD&to=YYYY-MM-DD
  *
- * Fetches upcoming activities from Wix Bookings (COURSE-type services)
- * and expands multi-session courses into individual session activities.
+ * Fetches upcoming activities from both Wix Events and Wix Bookings
+ * (COURSE-type services), expands multi-session courses into individual
+ * session activities, and merges everything into a single list.
  *
- * OPTIMIZED: Fetches sessions in parallel and only within the requested range.
+ * OPTIMIZED: Fetches events + sessions in parallel and only within the requested range.
  */
 export async function GET(req: NextRequest) {
   const apiKey = process.env.WIX_API_KEY;
@@ -60,12 +61,49 @@ export async function GET(req: NextRequest) {
   };
 
   try {
-    // Fetch COURSE and CLASS services from Wix Bookings
-    const services = await queryFutureCourses(options, fromDate);
+    // Fetch Wix Events AND Wix Bookings in parallel
+    const [wixEvents, services] = await Promise.all([
+      queryWixEvents(options, fromDate, toDate),
+      queryFutureCourses(options, fromDate),
+    ]);
 
     const fromTimestamp = new Date(`${fromDate}T00:00:00.000Z`).getTime();
     const toTimestamp = new Date(`${toDate}T23:59:59.000Z`).getTime();
 
+    // ─── Convert Wix Events to Activity objects ───────────────────
+    const eventActivities: Activity[] = wixEvents.map((event: WixEvent) => {
+      const startDate =
+        event.dateAndTimeSettings?.startDate ||
+        event.scheduling?.startDate ||
+        new Date().toISOString();
+      const endDate =
+        event.dateAndTimeSettings?.endDate ||
+        event.scheduling?.endDate ||
+        undefined;
+
+      const imageUrl = resolveWixImageUrl(event.mainImage?.url);
+      const locationStr =
+        event.location?.name ||
+        event.location?.address ||
+        undefined;
+
+      return {
+        id: event.id || uuidv4(),
+        title: str(event.title) || 'Untitled Event',
+        description: str(event.description),
+        startDate,
+        endDate,
+        location: locationStr,
+        imageUrl,
+        sourceUrl: event.eventPageUrl || undefined,
+        source: 'wix-event' as const,
+        type: 'promotion' as const,
+        selected: false,
+        status: event.status === 'UPCOMING' ? 'scheduled' as const : undefined,
+      };
+    });
+
+    // ─── Fetch Booking sessions in parallel ─────────────────────
     // OPTIMIZATION: Fetch ALL session queries in parallel instead of sequential
     const sessionPromises = services.map(async (service) => {
       const scheduleId = service.schedule?.id;
@@ -180,9 +218,12 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Merge event activities with booking activities
+    const allActivities = [...eventActivities, ...activities];
+
     // Exclude recurring/drop-in activities
     const excludePrefixes = ['online', 'drop in'];
-    const filtered = activities.filter((a) => {
+    const filtered = allActivities.filter((a) => {
       const lower = a.title.toLowerCase();
       return !excludePrefixes.some((prefix) => lower.startsWith(prefix));
     });
@@ -198,6 +239,7 @@ export async function GET(req: NextRequest) {
       meta: {
         fromDate,
         toDate,
+        eventCount: wixEvents.length,
         serviceCount: services.length,
         totalActivities: filtered.length,
       },
