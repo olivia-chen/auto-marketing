@@ -38,13 +38,36 @@ export async function GET(req: NextRequest) {
 
   const options = { apiKey, siteId };
 
-  // Some Wix fields may be objects instead of strings
+  // Some Wix fields may be objects instead of strings.
+  // Event descriptions come as rich-text node trees — extract plain text.
   const str = (val: any): string | undefined => {
     if (!val) return undefined;
     if (typeof val === 'string') return val;
-    if (typeof val === 'object') return JSON.stringify(val);
+    if (typeof val === 'object') {
+      // Wix rich-text format: { nodes: [{ type: "PARAGRAPH", nodes: [{ type: "TEXT", textData: { text: "..." } }] }] }
+      if (val.nodes && Array.isArray(val.nodes)) {
+        return extractTextFromNodes(val.nodes);
+      }
+      return JSON.stringify(val);
+    }
     return String(val);
   };
+
+  /**
+   * Recursively extract plain text from Wix rich-text node tree.
+   */
+  function extractTextFromNodes(nodes: any[]): string {
+    const parts: string[] = [];
+    for (const node of nodes) {
+      if (node.textData?.text) {
+        parts.push(node.textData.text);
+      }
+      if (node.nodes && Array.isArray(node.nodes)) {
+        parts.push(extractTextFromNodes(node.nodes));
+      }
+    }
+    return parts.join('').trim();
+  }
 
   /**
    * Resolve a Wix media reference to a full CDN URL.
