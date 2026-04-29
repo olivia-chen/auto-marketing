@@ -69,7 +69,9 @@ export interface WixEvent {
 
 /**
  * Query events from Wix Events V3.
- * Fetches UPCOMING and STARTED events from `fromDate` onward (no upper bound).
+ * Fetches UPCOMING, STARTED, and ENDED events from `fromDate` onward.
+ * Including ENDED ensures recently-past events (within the lookback window)
+ * still appear for recap posts.
  */
 export async function queryWixEvents(
   options: WixApiOptions,
@@ -79,7 +81,7 @@ export async function queryWixEvents(
     const data = await wixFetch('/events/v3/events/query', options, {
       query: {
         filter: {
-          status: { $in: ['UPCOMING', 'STARTED'] },
+          status: { $in: ['UPCOMING', 'STARTED', 'ENDED'] },
           'dateAndTimeSettings.startDate': {
             $gte: `${fromDate}T00:00:00.000Z`,
           },
