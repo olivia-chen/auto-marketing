@@ -68,18 +68,18 @@ export interface WixEvent {
 }
 
 /**
- * Query upcoming events from Wix Events V3.
+ * Query events from Wix Events V3.
+ * Fetches UPCOMING and STARTED events from `fromDate` onward (no upper bound).
  */
 export async function queryWixEvents(
   options: WixApiOptions,
-  fromDate: string,
-  toDate: string
+  fromDate: string
 ): Promise<WixEvent[]> {
   try {
     const data = await wixFetch('/events/v3/events/query', options, {
       query: {
         filter: {
-          status: 'UPCOMING',
+          status: { $in: ['UPCOMING', 'STARTED'] },
           'dateAndTimeSettings.startDate': {
             $gte: `${fromDate}T00:00:00.000Z`,
           },

@@ -61,9 +61,16 @@ export async function GET(req: NextRequest) {
   };
 
   try {
+    // Compute a 1-week-ago start for events (independent of the `from` param)
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split('T')[0];
+
     // Fetch Wix Events AND Wix Bookings in parallel
+    // Events: from 1 week ago, no upper bound (all future)
+    // Bookings: use the requested fromDate
     const [wixEvents, services] = await Promise.all([
-      queryWixEvents(options, fromDate, toDate),
+      queryWixEvents(options, oneWeekAgo),
       queryFutureCourses(options, fromDate),
     ]);
 
@@ -99,7 +106,7 @@ export async function GET(req: NextRequest) {
         source: 'wix-event' as const,
         type: 'promotion' as const,
         selected: false,
-        status: event.status === 'UPCOMING' ? 'scheduled' as const : undefined,
+        status: (event.status === 'UPCOMING' || event.status === 'STARTED') ? 'scheduled' as const : undefined,
       };
     });
 
