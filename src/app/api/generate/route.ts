@@ -133,7 +133,31 @@ Your content must follow this angle:`;
     .map((p) => {
       switch (p) {
         case 'redbook':
-          return `"redbook": Xiaohongshu (Redbook). Write in **Simplified Chinese (简体中文)**. Highly engaging, visually appealing long-form text with emojis. Lifestyle-oriented tone with story-telling. Include popular relevant hashtags. This is for a culture/wellness foundation.`;
+          return `"redbook": Xiaohongshu (小红书). Write in **Simplified Chinese (简体中文)**.
+
+CRITICAL RULE: NEVER write announcement-style (公告体) content like "X/X活动安排" or "活动通知". ALWAYS write emotion-style (情绪体) content. Data shows emotion-style posts get 10-15x more engagement than announcements.
+
+TITLE (max 20 chars including emoji):
+- Use one of these proven formulas:
+  A) 否定句: "你不必 [痛点]，[价值承诺] ❤️"
+  B) 疑问句: "[身份标签] 最 [情绪] 的事是什么？"
+  C) 反差型: "[看似不可能]，原来 [简单方法]"
+  D) 数字清单: "[N]个 [免费/必备] [资源]，赶紧收藏🌟"
+- End with one emoji (❤️ or 🆓 or 🌟)
+
+BODY — follow this 4-part arc:
+1. 情绪钩子 (2-3 sentences): Start with a pain point or shared feeling. Use "你" for direct address. Make the reader feel seen.
+2. 重构认知 (2-3 sentences): Reframe the problem. "你不必吃这个苦" / "原来有办法". Give a fresh perspective.
+3. 价值清单 (main body): Use 1️⃣2️⃣3️⃣ for numbered items, 🌟 for sub-items. Activity details go HERE, wrapped as "resources/solutions", not "institutional announcements". Weave in emotional descriptions between facts.
+4. 温暖收尾 (2-3 sentences): Include "记得收藏🌟" nudge. Ask an open question to drive comments. End with warm slogan like "你不是一个人在战斗 ❤️".
+
+VOICE: Warm community mom-friend, NOT institutional. Use 口语化 expressions. OK to mix in common English words (storytime, walk-in, burn out). Never use "尊敬的家长" or "本机构".
+
+EMOJI: 15-25 total per post. Use 1️⃣-6️⃣ for lists, 🌟 for sub-items, ❤️ for emotion, 🆓 for free, 🤩 for excitement. Never use 🔥💯🙏.
+
+HASHTAGS: 3-6 tags at the very end. Mix broad (#带娃 #湾区遛娃) + niche (#免费早教资源分享) + brand (#湾区小书虫亲子图书馆).
+
+ACCOUNT: 湾区小书虫中文图书馆 — a nonprofit Chinese children's library in Menlo Park, Bay Area, part of The Joy Culture Foundation (凯芯文教基金会).`;
         case 'linkedin':
           return `"linkedin": LinkedIn. Write in **English**. Professional, value-oriented, clean formatting. Insightful or celebratory tone. Include 3-5 professional hashtags. Focus on the foundation's mission and impact.`;
         case 'facebook':
