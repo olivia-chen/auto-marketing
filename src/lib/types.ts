@@ -236,3 +236,91 @@ export interface WeekSchedule {
   weekEnd: string;
   activities: Activity[];
 }
+
+// ─── Workflow / Task Management ───────────────────────────────────
+//
+// A lightweight request → assignment → status pipeline so anyone can
+// submit work to the marketing team, a manager can assign it to a
+// worker, and everyone can track where it stands.
+
+export type TaskStatus =
+  | 'requested'
+  | 'assigned'
+  | 'in_progress'
+  | 'review'
+  | 'done';
+
+export const TASK_STATUS_ORDER: TaskStatus[] = [
+  'requested',
+  'assigned',
+  'in_progress',
+  'review',
+  'done',
+];
+
+export const TASK_STATUS_CONFIG: Record<
+  TaskStatus,
+  { label: string; color: string; dot: string }
+> = {
+  requested: { label: 'Requested', color: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' },
+  assigned: { label: 'Assigned', color: 'bg-violet-100 text-violet-700', dot: 'bg-violet-500' },
+  in_progress: { label: 'In Progress', color: 'bg-blue-100 text-blue-700', dot: 'bg-blue-500' },
+  review: { label: 'Review', color: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500' },
+  done: { label: 'Done', color: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500' },
+};
+
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+
+export const TASK_PRIORITY_CONFIG: Record<
+  TaskPriority,
+  { label: string; color: string }
+> = {
+  low: { label: 'Low', color: 'bg-slate-100 text-slate-500' },
+  medium: { label: 'Medium', color: 'bg-sky-100 text-sky-700' },
+  high: { label: 'High', color: 'bg-orange-100 text-orange-700' },
+  urgent: { label: 'Urgent', color: 'bg-red-100 text-red-700' },
+};
+
+export interface TaskComment {
+  author: string; // email
+  authorName: string;
+  text: string;
+  at: string; // ISO timestamp
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  category: string; // free-form, e.g. a CampaignType value or "General"
+  priority: TaskPriority;
+  status: TaskStatus;
+  requestedByEmail: string;
+  requestedByName: string;
+  assignedToEmail: string; // '' when unassigned
+  assignedToName: string;
+  dueDate: string; // YYYY-MM-DD or ''
+  activityRef: string; // optional free-text link/reference to a campaign item
+  comments: TaskComment[];
+  createdAt: string; // ISO
+  updatedAt: string; // ISO
+}
+
+/** Fields a client may send when creating a request. */
+export interface NewTaskInput {
+  title: string;
+  description?: string;
+  category?: string;
+  priority?: TaskPriority;
+  dueDate?: string;
+  activityRef?: string;
+  assignedToEmail?: string; // managers only; ignored otherwise
+  assignedToName?: string;
+}
+
+/** Current user's identity + role, returned alongside the task list. */
+export interface TaskViewer {
+  email: string;
+  name: string;
+  isManager: boolean;
+}

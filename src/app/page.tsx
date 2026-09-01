@@ -52,6 +52,7 @@ import {
   Share2,
   LogOut,
   Search,
+  ClipboardList,
 } from 'lucide-react';
 import {
   Activity,
@@ -1264,6 +1265,17 @@ export default function Home() {
               {aiProvider === 'openai' ? 'OpenAI' : 'Gemini'}
               {(aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini) ? '' : ' — Not Configured'}
             </Badge>
+            <a href="/workflow">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 sm:h-9 gap-1 sm:gap-1.5 text-[10px] sm:text-xs border-teal-200 text-teal-700 hover:bg-teal-50 px-2 sm:px-3"
+              >
+                <ClipboardList className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
+                <span className="hidden sm:inline">Workflow</span>
+                <span className="sm:hidden">Tasks</span>
+              </Button>
+            </a>
             <Button
               variant="outline"
               size="sm"
