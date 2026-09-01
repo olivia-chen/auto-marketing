@@ -301,7 +301,9 @@ export async function createTask(partial: Partial<Task> & { title: string; reque
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `'${TAB_NAME}'!A2`,
-    valueInputOption: 'USER_ENTERED',
+    // RAW so user content (e.g. a title starting with "=") is stored verbatim
+    // and never interpreted as a spreadsheet formula.
+    valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [taskToRow(task)] },
   });
@@ -347,7 +349,7 @@ export async function updateTask(
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `'${TAB_NAME}'!A${sheetRow}:O${sheetRow}`,
-    valueInputOption: 'USER_ENTERED',
+    valueInputOption: 'RAW',
     requestBody: { values: [taskToRow(updated)] },
   });
 
