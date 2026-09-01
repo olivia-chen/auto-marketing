@@ -125,16 +125,33 @@ async function getSpreadsheetId(
   let id = found.data.files?.[0]?.id || null;
 
   if (!id) {
-    // Create it
-    const created = await drive.files.create({
-      requestBody: {
-        name: SPREADSHEET_NAME,
-        mimeType: 'application/vnd.google-apps.spreadsheet',
-      },
-      fields: 'id',
-      supportsAllDrives: true,
-    });
-    id = created.data.id!;
+    // Try to create the spreadsheet. A service account has no Drive storage
+    // quota of its own, so this only succeeds inside a Shared Drive (or a
+    // folder on one). On a personal/Hobby Google account it fails with a
+    // "storage quota exceeded" error — in that case the user must create the
+    // sheet themselves and share it with the service account (see below).
+    const rootFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID;
+    try {
+      const created = await drive.files.create({
+        requestBody: {
+          name: SPREADSHEET_NAME,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+          ...(rootFolderId ? { parents: [rootFolderId] } : {}),
+        },
+        fields: 'id',
+        supportsAllDrives: true,
+      });
+      id = created.data.id!;
+    } catch (e) {
+      const sa = serviceAccountEmail() || 'the service account';
+      const detail = (e as Error)?.message || 'unknown error';
+      throw new TasksStorageError(
+        `Couldn't create the workflow spreadsheet (${detail}). ` +
+          `Create a blank Google Sheet named exactly "${SPREADSHEET_NAME}", ` +
+          `then Share it as Editor with ${sa} — it will be picked up automatically. ` +
+          `Or set TASKS_SPREADSHEET_ID to an existing sheet's id.`
+      );
+    }
 
     const sheets = google.sheets({ version: 'v4', auth: auth! });
     // Rename the default sheet to our tab name and write the header row.
@@ -245,6 +262,14 @@ export class TasksNotConfiguredError extends Error {
   constructor() {
     super('Google service account is not configured (GOOGLE_SERVICE_ACCOUNT_KEY).');
     this.name = 'TasksNotConfiguredError';
+  }
+}
+
+/** Storage exists but the workflow spreadsheet can't be created/found. */
+export class TasksStorageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TasksStorageError';
   }
 }
 

@@ -8,6 +8,7 @@ import {
   isConfigured,
   serviceAccountEmail,
   TasksNotConfiguredError,
+  TasksStorageError,
 } from '@/lib/tasks-store';
 import type { NewTaskInput, TaskViewer } from '@/lib/types';
 
@@ -44,6 +45,7 @@ export async function GET() {
     return NextResponse.json({ tasks, viewer });
   } catch (err) {
     if (err instanceof TasksNotConfiguredError) return notConfiguredResponse();
+    if (err instanceof TasksStorageError) return NextResponse.json({ error: err.message }, { status: 409 });
     console.error('GET /api/tasks failed:', err);
     return NextResponse.json(
       { error: (err as Error).message || 'Failed to load tasks' },
@@ -91,6 +93,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ task }, { status: 201 });
   } catch (err) {
     if (err instanceof TasksNotConfiguredError) return notConfiguredResponse();
+    if (err instanceof TasksStorageError) return NextResponse.json({ error: err.message }, { status: 409 });
     console.error('POST /api/tasks failed:', err);
     return NextResponse.json(
       { error: (err as Error).message || 'Failed to create task' },
