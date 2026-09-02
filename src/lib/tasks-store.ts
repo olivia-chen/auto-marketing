@@ -91,13 +91,19 @@ export function serviceAccountEmail(): string {
  */
 export function isManager(email: string | null | undefined): boolean {
   if (!email) return false;
+  const managers = managerEmails();
+  if (managers.length === 0) return true; // open mode
+  return managers.includes(email.toLowerCase());
+}
+
+/** The configured manager emails (lowercased), or [] when unset (open mode). */
+export function managerEmails(): string[] {
   const raw = process.env.MANAGER_EMAILS;
-  if (!raw || !raw.trim()) return true; // open mode
-  const managers = raw
+  if (!raw || !raw.trim()) return [];
+  return raw
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  return managers.includes(email.toLowerCase());
 }
 
 // ─── Spreadsheet lookup / creation ─────────────────────────────────────

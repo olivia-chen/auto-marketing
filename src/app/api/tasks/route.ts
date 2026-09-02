@@ -7,9 +7,11 @@ import {
   isManager,
   isConfigured,
   serviceAccountEmail,
+  managerEmails,
   TasksNotConfiguredError,
   TasksStorageError,
 } from '@/lib/tasks-store';
+import { notifyNewRequest, notifyAssigned } from '@/lib/email';
 import type { NewTaskInput, TaskViewer } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -90,6 +92,11 @@ export async function POST(req: NextRequest) {
       assignedToEmail: manager ? body.assignedToEmail || '' : '',
       assignedToName: manager ? body.assignedToName || '' : '',
     });
+
+    // Best-effort notifications (no-ops unless RESEND_API_KEY is set).
+    await notifyNewRequest(task, managerEmails(), email);
+    if (task.assignedToEmail) await notifyAssigned(task, email);
+
     return NextResponse.json({ task }, { status: 201 });
   } catch (err) {
     if (err instanceof TasksNotConfiguredError) return notConfiguredResponse();

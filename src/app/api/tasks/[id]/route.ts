@@ -10,6 +10,7 @@ import {
   makeComment,
   TasksNotConfiguredError,
 } from '@/lib/tasks-store';
+import { notifyAssigned, notifyDone } from '@/lib/email';
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 import { TASK_STATUS_ORDER } from '@/lib/types';
 
@@ -149,6 +150,15 @@ export async function PATCH(
 
     const updated = await updateTask(id, patch);
     if (!updated) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+
+    // Best-effort notifications (no-ops unless RESEND_API_KEY is set).
+    const newlyAssigned =
+      !!updated.assignedToEmail &&
+      updated.assignedToEmail.toLowerCase() !== existing.assignedToEmail.toLowerCase();
+    if (newlyAssigned) await notifyAssigned(updated, email);
+    if (updated.status === 'done' && existing.status !== 'done')
+      await notifyDone(updated, email);
+
     return NextResponse.json({ task: updated });
   } catch (err) {
     if (err instanceof TasksNotConfiguredError) return notConfigured();
