@@ -161,6 +161,50 @@ export default function WorkflowPage() {
     setActiveTask((prev) => (prev && prev.id === id ? null : prev));
   }, []);
 
+  // ── Drag-and-drop between status columns ──
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null);
+
+  // Only the assignee or a manager may move a task.
+  const canChangeStatus = useCallback(
+    (t: Task) => {
+      if (!viewer) return false;
+      return (
+        viewer.isManager ||
+        (!!t.assignedToEmail &&
+          t.assignedToEmail.toLowerCase() === viewer.email.toLowerCase())
+      );
+    },
+    [viewer]
+  );
+
+  const changeStatus = useCallback(
+    async (task: Task, status: TaskStatus) => {
+      if (task.status === status) return;
+      const prevStatus = task.status;
+      // Optimistic move.
+      setTasks((ts) => ts.map((t) => (t.id === task.id ? { ...t, status } : t)));
+      setError(null);
+      try {
+        const res = await fetch(`/api/tasks/${task.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to update status');
+        setTasks((ts) => ts.map((t) => (t.id === task.id ? data.task : t)));
+      } catch (e) {
+        // Revert on failure.
+        setTasks((ts) =>
+          ts.map((t) => (t.id === task.id ? { ...t, status: prevStatus } : t))
+        );
+        setError((e as Error).message);
+      }
+    },
+    []
+  );
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-teal-50/30 to-slate-50">
       {/* Header */}
@@ -292,12 +336,49 @@ export default function WorkflowPage() {
                     <h2 className="text-sm font-semibold text-slate-700">{cfg.label}</h2>
                     <span className="text-xs text-slate-400 font-medium">{col.length}</span>
                   </div>
-                  <div className="flex flex-col gap-2 rounded-xl bg-slate-100/60 p-2 min-h-[80px] flex-1">
+                  <div
+                    onDragOver={(e) => {
+                      if (!dragId) return;
+                      e.preventDefault(); // allow drop
+                      if (dragOverCol !== status) setDragOverCol(status);
+                    }}
+                    onDragLeave={(e) => {
+                      // Only clear when leaving the column, not entering a child.
+                      if (!e.currentTarget.contains(e.relatedTarget as Node))
+                        setDragOverCol((c) => (c === status ? null : c));
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const id = e.dataTransfer.getData('text/plain') || dragId;
+                      setDragOverCol(null);
+                      setDragId(null);
+                      const t = tasks.find((x) => x.id === id);
+                      if (t) changeStatus(t, status);
+                    }}
+                    className={`flex flex-col gap-2 rounded-xl p-2 min-h-[80px] flex-1 transition-colors ${
+                      dragOverCol === status
+                        ? 'bg-teal-100/70 ring-2 ring-teal-400 ring-inset'
+                        : 'bg-slate-100/60'
+                    }`}
+                  >
                     {col.length === 0 ? (
-                      <p className="text-xs text-slate-400 text-center py-6">—</p>
+                      <p className="text-xs text-slate-400 text-center py-6">
+                        {dragOverCol === status ? 'Drop here' : '—'}
+                      </p>
                     ) : (
                       col.map((t) => (
-                        <TaskCard key={t.id} task={t} onOpen={() => setActiveTask(t)} />
+                        <TaskCard
+                          key={t.id}
+                          task={t}
+                          onOpen={() => setActiveTask(t)}
+                          draggable={canChangeStatus(t)}
+                          dragging={dragId === t.id}
+                          onDragStart={() => setDragId(t.id)}
+                          onDragEnd={() => {
+                            setDragId(null);
+                            setDragOverCol(null);
+                          }}
+                        />
                       ))
                     )}
                   </div>
@@ -336,7 +417,21 @@ export default function WorkflowPage() {
 
 // ─── Task Card ────────────────────────────────────────────────────
 
-function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
+function TaskCard({
+  task,
+  onOpen,
+  draggable = false,
+  dragging = false,
+  onDragStart,
+  onDragEnd,
+}: {
+  task: Task;
+  onOpen: () => void;
+  draggable?: boolean;
+  dragging?: boolean;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
+}) {
   const pri = TASK_PRIORITY_CONFIG[task.priority];
   const overdue =
     task.dueDate &&
@@ -352,7 +447,20 @@ function TaskCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
   return (
     <button
       onClick={onOpen}
-      className="text-left w-full rounded-lg bg-white border border-slate-200 hover:border-teal-300 hover:shadow-sm transition p-2.5 space-y-2"
+      draggable={draggable}
+      onDragStart={(e) => {
+        if (!draggable) {
+          e.preventDefault();
+          return;
+        }
+        e.dataTransfer.setData('text/plain', task.id);
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart?.();
+      }}
+      onDragEnd={() => onDragEnd?.()}
+      className={`text-left w-full rounded-lg bg-white border border-slate-200 hover:border-teal-300 hover:shadow-sm transition p-2.5 space-y-2 ${
+        draggable ? 'cursor-grab active:cursor-grabbing' : ''
+      } ${dragging ? 'opacity-40' : ''}`}
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm font-medium text-slate-800 leading-snug line-clamp-2">
