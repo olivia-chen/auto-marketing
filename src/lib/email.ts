@@ -1,27 +1,53 @@
 /**
- * Email notifications for the workflow feature, sent via Resend's REST API.
+ * Email notifications for the workflow feature.
  *
- * Enabled only when RESEND_API_KEY is set — otherwise every function here is
- * a no-op, so the app works fine without email configured. All sends are
- * best-effort: failures are logged and never bubble up to fail the request
- * that triggered them.
+ * Two backends, chosen by env (Gmail SMTP takes precedence when configured):
+ *   1. Gmail SMTP (nodemailer)  — GMAIL_USER + GMAIL_APP_PASSWORD
+ *   2. Resend REST API          — RESEND_API_KEY
+ *
+ * If neither is configured every function here is a no-op, so the app works
+ * fine without email. All sends are best-effort: failures are logged and
+ * never bubble up to fail the request that triggered them.
  *
  * Env:
- *   RESEND_API_KEY  (required to send)  — from resend.com
- *   EMAIL_FROM      (optional)          — e.g. "TJCF Workflow <workflow@yourdomain.org>"
- *                                         must be a Resend-verified sender for
- *                                         real delivery; defaults to Resend's
- *                                         onboarding sender (test mode only).
- *   APP_URL / NEXTAUTH_URL (optional)   — base URL used for board links.
+ *   GMAIL_USER          — the Gmail address to send from (e.g. you@gmail.com)
+ *   GMAIL_APP_PASSWORD  — a Google App Password (16 chars; spaces are ignored)
+ *   RESEND_API_KEY      — alternative backend, from resend.com
+ *   EMAIL_FROM (opt)    — "Name <address>"; defaults to the Gmail user, or
+ *                         Resend's onboarding sender in test mode.
+ *   APP_URL / NEXTAUTH_URL (opt) — base URL used for board links.
  */
 
+import nodemailer, { type Transporter } from 'nodemailer';
 import type { Task } from './types';
 import { TASK_STATUS_CONFIG, TASK_PRIORITY_CONFIG } from './types';
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 
+function gmailConfigured(): boolean {
+  return !!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
+}
+
 export function emailEnabled(): boolean {
-  return !!process.env.RESEND_API_KEY;
+  return gmailConfigured() || !!process.env.RESEND_API_KEY;
+}
+
+let cachedTransport: Transporter | null = null;
+function gmailTransport(): Transporter | null {
+  if (!gmailConfigured()) return null;
+  if (!cachedTransport) {
+    cachedTransport = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: process.env.GMAIL_USER,
+        // App passwords are displayed in groups of 4 — strip any spaces.
+        pass: (process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, ''),
+      },
+    });
+  }
+  return cachedTransport;
 }
 
 function appUrl(): string {
@@ -33,7 +59,9 @@ function appUrl(): string {
 }
 
 function fromAddress(): string {
-  return process.env.EMAIL_FROM || 'TJCF Workflow <onboarding@resend.dev>';
+  if (process.env.EMAIL_FROM) return process.env.EMAIL_FROM;
+  if (gmailConfigured()) return `TJCF Workflow <${process.env.GMAIL_USER}>`;
+  return 'TJCF Workflow <onboarding@resend.dev>';
 }
 
 function esc(s: string | undefined | null): string {
@@ -45,8 +73,22 @@ function esc(s: string | undefined | null): string {
 }
 
 async function send(to: string, subject: string, html: string): Promise<void> {
+  if (!to) return;
+
+  // Preferred: Gmail SMTP.
+  const transport = gmailTransport();
+  if (transport) {
+    try {
+      await transport.sendMail({ from: fromAddress(), to, subject, html });
+    } catch (e) {
+      console.error(`Gmail SMTP send failed to ${to}:`, e);
+    }
+    return;
+  }
+
+  // Fallback: Resend REST API.
   const key = process.env.RESEND_API_KEY;
-  if (!key || !to) return;
+  if (!key) return;
   try {
     const res = await fetch(RESEND_ENDPOINT, {
       method: 'POST',
