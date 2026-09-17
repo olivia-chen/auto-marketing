@@ -288,6 +288,11 @@ export interface TaskComment {
   at: string; // ISO timestamp
 }
 
+export interface TaskAssignee {
+  email: string;
+  name: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -297,8 +302,7 @@ export interface Task {
   status: TaskStatus;
   requestedByEmail: string;
   requestedByName: string;
-  assignedToEmail: string; // '' when unassigned
-  assignedToName: string;
+  assignees: TaskAssignee[]; // empty when unassigned; may have several
   dueDate: string; // YYYY-MM-DD or ''
   activityRef: string; // optional free-text link/reference to a campaign item
   comments: TaskComment[];
@@ -314,8 +318,7 @@ export interface NewTaskInput {
   priority?: TaskPriority;
   dueDate?: string;
   activityRef?: string;
-  assignedToEmail?: string; // managers only; ignored otherwise
-  assignedToName?: string;
+  assignees?: TaskAssignee[]; // managers only; ignored otherwise
 }
 
 /** Current user's identity + role, returned alongside the task list. */

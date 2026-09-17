@@ -16,6 +16,7 @@ import { google } from 'googleapis';
 import { v4 as uuidv4 } from 'uuid';
 import type {
   Task,
+  TaskAssignee,
   TaskComment,
   TaskPriority,
   TaskStatus,
@@ -35,14 +36,15 @@ const HEADER = [
   'status',
   'requestedByEmail',
   'requestedByName',
-  'assignedToEmail',
-  'assignedToName',
+  'assigneeEmails', // human-readable, comma-joined summary of assignees
+  'assigneeNames', // human-readable, comma-joined summary of assignees
   'dueDate',
   'activityRef',
   'comments', // JSON string
   'createdAt',
   'updatedAt',
-] as const;
+  'assignees', // JSON string — authoritative list of { email, name }
+] as const; // 16 columns → A..P
 
 // ─── Auth ────────────────────────────────────────────────────────────
 
@@ -91,18 +93,36 @@ export function serviceAccountEmail(): string {
  */
 export function isManager(email: string | null | undefined): boolean {
   if (!email) return false;
-  const managers = managerEmails();
-  if (managers.length === 0) return true; // open mode
-  return managers.includes(email.toLowerCase());
+  const emails = managerEmails();
+  const domains = managerDomains();
+  // Open mode: no manager rule configured at all → everyone is a manager.
+  if (emails.length === 0 && domains.length === 0) return true;
+  const normalized = email.toLowerCase();
+  const domain = normalized.split('@')[1];
+  if (domain && domains.includes(domain)) return true;
+  return emails.includes(normalized);
 }
 
-/** The configured manager emails (lowercased), or [] when unset (open mode). */
+/** The configured manager emails (lowercased), or [] when unset. */
 export function managerEmails(): string[] {
   const raw = process.env.MANAGER_EMAILS;
   if (!raw || !raw.trim()) return [];
   return raw
     .split(',')
     .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * Email domains whose users are all managers (lowercased, no leading '@'),
+ * e.g. MANAGER_DOMAINS="thejoyculturefoundation.org". Empty when unset.
+ */
+export function managerDomains(): string[] {
+  const raw = process.env.MANAGER_DOMAINS;
+  if (!raw || !raw.trim()) return [];
+  return raw
+    .split(',')
+    .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
     .filter(Boolean);
 }
 
@@ -214,6 +234,7 @@ async function ensureTab(
 // ─── Row <-> Task serialization ────────────────────────────────────────
 
 function taskToRow(t: Task): string[] {
+  const assignees = t.assignees || [];
   return [
     t.id,
     t.title,
@@ -223,13 +244,14 @@ function taskToRow(t: Task): string[] {
     t.status,
     t.requestedByEmail,
     t.requestedByName,
-    t.assignedToEmail,
-    t.assignedToName,
+    assignees.map((a) => a.email).join(', '), // readable summary
+    assignees.map((a) => a.name || a.email).join(', '), // readable summary
     t.dueDate,
     t.activityRef,
     JSON.stringify(t.comments || []),
     t.createdAt,
     t.updatedAt,
+    JSON.stringify(assignees), // authoritative
   ];
 }
 
@@ -242,6 +264,28 @@ function rowToTask(row: string[]): Task | null {
   } catch {
     comments = [];
   }
+
+  // Assignees: prefer the JSON column (16th, index 15); fall back to the
+  // legacy single-assignee columns (8/9) for rows written before this change.
+  let assignees: TaskAssignee[] = [];
+  try {
+    if (row[15]) {
+      const parsed = JSON.parse(row[15]);
+      if (Array.isArray(parsed)) {
+        assignees = parsed
+          .filter((a) => a && a.email)
+          .map((a) => ({ email: String(a.email), name: String(a.name || a.email) }));
+      }
+    }
+  } catch {
+    assignees = [];
+  }
+  if (assignees.length === 0 && row[8]) {
+    const emails = row[8].split(',').map((s) => s.trim()).filter(Boolean);
+    const names = (row[9] || '').split(',').map((s) => s.trim());
+    assignees = emails.map((email, i) => ({ email, name: names[i] || email }));
+  }
+
   const status = (row[5] || 'requested') as TaskStatus;
   return {
     id: row[0],
@@ -252,14 +296,40 @@ function rowToTask(row: string[]): Task | null {
     status: TASK_STATUS_ORDER.includes(status) ? status : 'requested',
     requestedByEmail: row[6] || '',
     requestedByName: row[7] || '',
-    assignedToEmail: row[8] || '',
-    assignedToName: row[9] || '',
+    assignees,
     dueDate: row[10] || '',
     activityRef: row[11] || '',
     comments,
     createdAt: row[13] || '',
     updatedAt: row[14] || '',
   };
+}
+
+/**
+ * Coerce arbitrary client input into a clean, de-duplicated assignee list.
+ * Accepts an array of { email, name } objects or plain email strings.
+ */
+export function normalizeAssignees(input: unknown): TaskAssignee[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: TaskAssignee[] = [];
+  for (const item of input) {
+    let email = '';
+    let name = '';
+    if (typeof item === 'string') {
+      email = item;
+    } else if (item && typeof item === 'object') {
+      email = String((item as TaskAssignee).email || '');
+      name = String((item as TaskAssignee).name || '');
+    }
+    email = email.trim();
+    if (!email) continue;
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ email, name: name.trim() || email });
+  }
+  return out;
 }
 
 // ─── Public API ────────────────────────────────────────────────────────
@@ -287,7 +357,7 @@ async function readAllRows(): Promise<{ rows: string[][]; spreadsheetId: string 
   await ensureTab(sheets, spreadsheetId);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A2:O`,
+    range: `'${TAB_NAME}'!A2:P`,
   });
   return { rows: res.data.values || [], spreadsheetId };
 }
@@ -310,18 +380,17 @@ export async function createTask(partial: Partial<Task> & { title: string; reque
   await ensureTab(sheets, spreadsheetId);
 
   const now = new Date().toISOString();
-  const assigned = !!partial.assignedToEmail;
+  const assignees = partial.assignees || [];
   const task: Task = {
     id: uuidv4(),
     title: partial.title,
     description: partial.description || '',
     category: partial.category || 'General',
     priority: partial.priority || 'medium',
-    status: partial.status || (assigned ? 'assigned' : 'requested'),
+    status: partial.status || (assignees.length > 0 ? 'assigned' : 'requested'),
     requestedByEmail: partial.requestedByEmail,
     requestedByName: partial.requestedByName || partial.requestedByEmail,
-    assignedToEmail: partial.assignedToEmail || '',
-    assignedToName: partial.assignedToName || '',
+    assignees,
     dueDate: partial.dueDate || '',
     activityRef: partial.activityRef || '',
     comments: partial.comments || [],
@@ -358,7 +427,7 @@ export async function updateTask(
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A2:O`,
+    range: `'${TAB_NAME}'!A2:P`,
   });
   const rows = res.data.values || [];
   const index = rows.findIndex((r) => r[0] === id);
@@ -379,7 +448,7 @@ export async function updateTask(
   const sheetRow = index + 2;
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A${sheetRow}:O${sheetRow}`,
+    range: `'${TAB_NAME}'!A${sheetRow}:P${sheetRow}`,
     valueInputOption: 'RAW',
     requestBody: { values: [taskToRow(updated)] },
   });
@@ -408,7 +477,7 @@ export async function deleteTask(id: string): Promise<boolean> {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A2:O`,
+    range: `'${TAB_NAME}'!A2:P`,
   });
   const rows = res.data.values || [];
   const index = rows.findIndex((r) => r[0] === id);

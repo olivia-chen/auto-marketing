@@ -8,10 +8,11 @@ import {
   isConfigured,
   serviceAccountEmail,
   managerEmails,
+  normalizeAssignees,
   TasksNotConfiguredError,
   TasksStorageError,
 } from '@/lib/tasks-store';
-import { notifyNewRequest, notifyAssigned } from '@/lib/email';
+import { notifyNewRequest, notifyAssignees } from '@/lib/email';
 import type { NewTaskInput, TaskViewer } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -77,6 +78,8 @@ export async function POST(req: NextRequest) {
   }
 
   const manager = isManager(email);
+  // Only a manager may pre-assign at creation time.
+  const assignees = manager ? normalizeAssignees(body.assignees) : [];
 
   try {
     const task = await createTask({
@@ -88,14 +91,12 @@ export async function POST(req: NextRequest) {
       activityRef: body.activityRef?.trim() || '',
       requestedByEmail: email,
       requestedByName: session.user?.name || email,
-      // Only a manager may pre-assign at creation time.
-      assignedToEmail: manager ? body.assignedToEmail || '' : '',
-      assignedToName: manager ? body.assignedToName || '' : '',
+      assignees,
     });
 
-    // Best-effort notifications (no-ops unless RESEND_API_KEY is set).
+    // Best-effort notifications (no-ops unless email is configured).
     await notifyNewRequest(task, managerEmails(), email);
-    if (task.assignedToEmail) await notifyAssigned(task, email);
+    if (task.assignees.length > 0) await notifyAssignees(task, task.assignees, email);
 
     return NextResponse.json({ task }, { status: 201 });
   } catch (err) {

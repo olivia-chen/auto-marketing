@@ -37,11 +37,13 @@ import {
   Send,
   ClipboardList,
   RefreshCw,
+  X,
 } from 'lucide-react';
 import {
   Task,
   TaskStatus,
   TaskPriority,
+  TaskAssignee,
   TaskViewer,
   TASK_STATUS_ORDER,
   TASK_STATUS_CONFIG,
@@ -89,6 +91,102 @@ const CATEGORY_OPTIONS = [
 
 type Filter = 'all' | 'mine' | 'assigned';
 
+// ─── Assignee Editor (add/remove multiple people) ─────────────────
+
+function AssigneeEditor({
+  value,
+  onChange,
+  directory,
+  listId,
+  disabled = false,
+}: {
+  value: TaskAssignee[];
+  onChange: (next: TaskAssignee[]) => void;
+  directory: { email: string; name: string }[];
+  listId: string;
+  disabled?: boolean;
+}) {
+  const [input, setInput] = useState('');
+
+  const add = () => {
+    const email = input.trim();
+    if (!email) return;
+    if (value.some((a) => a.email.toLowerCase() === email.toLowerCase())) {
+      setInput('');
+      return;
+    }
+    const name =
+      directory.find((d) => d.email.toLowerCase() === email.toLowerCase())?.name || '';
+    onChange([...value, { email, name }]);
+    setInput('');
+  };
+
+  const remove = (email: string) =>
+    onChange(value.filter((a) => a.email.toLowerCase() !== email.toLowerCase()));
+
+  return (
+    <div className="space-y-2">
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((a) => (
+            <span
+              key={a.email}
+              className="flex items-center gap-1.5 bg-teal-50 border border-teal-200 rounded-full pl-1 pr-1 py-0.5"
+            >
+              <span className="h-5 w-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[9px] font-bold">
+                {initials(a.name, a.email)}
+              </span>
+              <span className="text-xs text-slate-700">{a.name || a.email}</span>
+              <button
+                type="button"
+                onClick={() => remove(a.email)}
+                disabled={disabled}
+                className="h-4 w-4 rounded-full hover:bg-teal-200 flex items-center justify-center text-teal-600"
+                title="Remove"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Input
+          list={listId}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="Add someone by email…"
+          className="h-9"
+          disabled={disabled}
+        />
+        <datalist id={listId}>
+          {directory.map((d) => (
+            <option key={d.email} value={d.email}>
+              {d.name}
+            </option>
+          ))}
+        </datalist>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-9 flex-shrink-0"
+          onClick={add}
+          disabled={disabled || !input.trim()}
+        >
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────
 
 export default function WorkflowPage() {
@@ -125,7 +223,9 @@ export default function WorkflowPage() {
     const map = new Map<string, string>();
     for (const t of tasks) {
       if (t.requestedByEmail) map.set(t.requestedByEmail, t.requestedByName || t.requestedByEmail);
-      if (t.assignedToEmail) map.set(t.assignedToEmail, t.assignedToName || t.assignedToEmail);
+      for (const a of t.assignees) {
+        if (a.email) map.set(a.email, a.name || a.email);
+      }
     }
     return Array.from(map.entries()).map(([email, name]) => ({ email, name }));
   }, [tasks]);
@@ -134,7 +234,10 @@ export default function WorkflowPage() {
     if (!viewer) return tasks;
     const me = viewer.email.toLowerCase();
     if (filter === 'mine') return tasks.filter((t) => t.requestedByEmail.toLowerCase() === me);
-    if (filter === 'assigned') return tasks.filter((t) => t.assignedToEmail.toLowerCase() === me);
+    if (filter === 'assigned')
+      return tasks.filter((t) =>
+        t.assignees.some((a) => a.email.toLowerCase() === me)
+      );
     return tasks;
   }, [tasks, filter, viewer]);
 
@@ -171,8 +274,9 @@ export default function WorkflowPage() {
       if (!viewer) return false;
       return (
         viewer.isManager ||
-        (!!t.assignedToEmail &&
-          t.assignedToEmail.toLowerCase() === viewer.email.toLowerCase())
+        t.assignees.some(
+          (a) => a.email.toLowerCase() === viewer.email.toLowerCase()
+        )
       );
     },
     [viewer]
@@ -475,13 +579,23 @@ function TaskCard({
 
       <div className="flex items-center justify-between gap-2 pt-0.5">
         <div className="flex items-center gap-1.5 min-w-0">
-          {task.assignedToEmail ? (
+          {task.assignees.length > 0 ? (
             <>
-              <span className="h-5 w-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[9px] font-bold flex-shrink-0">
-                {initials(task.assignedToName, task.assignedToEmail)}
-              </span>
+              <div className="flex -space-x-1.5 flex-shrink-0">
+                {task.assignees.slice(0, 3).map((a) => (
+                  <span
+                    key={a.email}
+                    title={a.name || a.email}
+                    className="h-5 w-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[9px] font-bold ring-2 ring-white"
+                  >
+                    {initials(a.name, a.email)}
+                  </span>
+                ))}
+              </div>
               <span className="text-[11px] text-slate-500 truncate">
-                {shortName(task.assignedToName, task.assignedToEmail)}
+                {task.assignees.length === 1
+                  ? shortName(task.assignees[0].name, task.assignees[0].email)
+                  : `${task.assignees.length} people`}
               </span>
             </>
           ) : (
@@ -530,7 +644,7 @@ function NewRequestDialog({
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [dueDate, setDueDate] = useState('');
   const [activityRef, setActivityRef] = useState('');
-  const [assignEmail, setAssignEmail] = useState('');
+  const [assignees, setAssignees] = useState<TaskAssignee[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -542,8 +656,6 @@ function NewRequestDialog({
     setSaving(true);
     setErr(null);
     try {
-      const assignName =
-        directory.find((d) => d.email.toLowerCase() === assignEmail.toLowerCase())?.name || '';
       const res = await fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -554,9 +666,7 @@ function NewRequestDialog({
           priority,
           dueDate,
           activityRef,
-          ...(viewer.isManager && assignEmail
-            ? { assignedToEmail: assignEmail, assignedToName: assignName }
-            : {}),
+          ...(viewer.isManager && assignees.length > 0 ? { assignees } : {}),
         }),
       });
       const data = await res.json();
@@ -658,21 +768,13 @@ function NewRequestDialog({
 
           {viewer.isManager && (
             <div className="space-y-1.5">
-              <Label htmlFor="t-assign">Assign to (optional)</Label>
-              <Input
-                id="t-assign"
-                list="people-list"
-                value={assignEmail}
-                onChange={(e) => setAssignEmail(e.target.value)}
-                placeholder="worker@email.com"
+              <Label>Assign to (optional)</Label>
+              <AssigneeEditor
+                value={assignees}
+                onChange={setAssignees}
+                directory={directory}
+                listId="people-list-new"
               />
-              <datalist id="people-list">
-                {directory.map((d) => (
-                  <option key={d.email} value={d.email}>
-                    {d.name}
-                  </option>
-                ))}
-              </datalist>
             </div>
           )}
 
@@ -713,11 +815,10 @@ function TaskDetailDialog({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [comment, setComment] = useState('');
-  const [assignInput, setAssignInput] = useState(task.assignedToEmail);
 
   const me = viewer.email.toLowerCase();
   const isRequester = task.requestedByEmail.toLowerCase() === me;
-  const isAssignee = !!task.assignedToEmail && task.assignedToEmail.toLowerCase() === me;
+  const isAssignee = task.assignees.some((a) => a.email.toLowerCase() === me);
   const canStatus = viewer.isManager || isAssignee;
   const pri = TASK_PRIORITY_CONFIG[task.priority];
 
@@ -743,12 +844,6 @@ function TaskDetailDialog({
     },
     [task.id, onUpdated]
   );
-
-  const doAssign = () => {
-    const name =
-      directory.find((d) => d.email.toLowerCase() === assignInput.toLowerCase())?.name || '';
-    patch({ assignedToEmail: assignInput.trim(), assignedToName: name });
-  };
 
   const doDelete = async () => {
     if (!confirm('Delete this task permanently?')) return;
@@ -861,42 +956,30 @@ function TaskDetailDialog({
           {/* Assignment */}
           <div className="space-y-1.5">
             <Label className="text-xs text-slate-500 flex items-center gap-1">
-              <UserPlus className="h-3.5 w-3.5" /> Assignee
+              <UserPlus className="h-3.5 w-3.5" />{' '}
+              {task.assignees.length > 1 ? 'Assignees' : 'Assignee'}
             </Label>
             {viewer.isManager ? (
-              <div className="flex gap-2">
-                <Input
-                  list="people-list-detail"
-                  value={assignInput}
-                  onChange={(e) => setAssignInput(e.target.value)}
-                  placeholder="worker@email.com (leave blank to unassign)"
-                  className="h-9"
-                />
-                <datalist id="people-list-detail">
-                  {directory.map((d) => (
-                    <option key={d.email} value={d.email}>
-                      {d.name}
-                    </option>
-                  ))}
-                </datalist>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-9 flex-shrink-0"
-                  onClick={doAssign}
-                  disabled={busy || assignInput.trim().toLowerCase() === task.assignedToEmail.toLowerCase()}
-                >
-                  Assign
-                </Button>
-              </div>
-            ) : task.assignedToEmail ? (
-              <div className="flex items-center gap-1.5">
-                <span className="h-6 w-6 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[10px] font-bold">
-                  {initials(task.assignedToName, task.assignedToEmail)}
-                </span>
-                <span className="text-sm text-slate-700">
-                  {task.assignedToName || task.assignedToEmail}
-                </span>
+              <AssigneeEditor
+                value={task.assignees}
+                onChange={(next) => patch({ assignees: next })}
+                directory={directory}
+                listId="people-list-detail"
+                disabled={busy}
+              />
+            ) : task.assignees.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {task.assignees.map((a) => (
+                  <span
+                    key={a.email}
+                    className="flex items-center gap-1.5 bg-slate-100 rounded-full pl-1 pr-2.5 py-0.5"
+                  >
+                    <span className="h-5 w-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[9px] font-bold">
+                      {initials(a.name, a.email)}
+                    </span>
+                    <span className="text-xs text-slate-700">{a.name || a.email}</span>
+                  </span>
+                ))}
               </div>
             ) : (
               <p className="text-sm text-slate-400 italic">Unassigned</p>

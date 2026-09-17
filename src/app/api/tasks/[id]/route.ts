@@ -8,9 +8,10 @@ import {
   isManager,
   isConfigured,
   makeComment,
+  normalizeAssignees,
   TasksNotConfiguredError,
 } from '@/lib/tasks-store';
-import { notifyAssigned, notifyDone } from '@/lib/email';
+import { notifyAssignees, notifyDone } from '@/lib/email';
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 import { TASK_STATUS_ORDER } from '@/lib/types';
 
@@ -24,8 +25,7 @@ interface PatchBody {
   dueDate?: string;
   activityRef?: string;
   status?: TaskStatus;
-  assignedToEmail?: string;
-  assignedToName?: string;
+  assignees?: unknown; // array of { email, name } or email strings
   addComment?: string;
 }
 
@@ -62,32 +62,35 @@ export async function PATCH(
     if (!existing) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
 
     const isRequester = existing.requestedByEmail.toLowerCase() === email.toLowerCase();
-    const isAssignee =
-      !!existing.assignedToEmail &&
-      existing.assignedToEmail.toLowerCase() === email.toLowerCase();
+    const isAssignee = existing.assignees.some(
+      (a) => a.email.toLowerCase() === email.toLowerCase()
+    );
 
     const patch: Partial<Task> = {};
 
     // ── Assignment (managers only) ──
-    if (body.assignedToEmail !== undefined || body.assignedToName !== undefined) {
+    if (body.assignees !== undefined) {
       if (!manager) {
         return NextResponse.json(
           { error: 'Only a manager can assign tasks.' },
           { status: 403 }
         );
       }
-      patch.assignedToEmail = body.assignedToEmail ?? existing.assignedToEmail;
-      patch.assignedToName = body.assignedToName ?? existing.assignedToName;
+      patch.assignees = normalizeAssignees(body.assignees);
       // Auto-advance from "requested" to "assigned" when first assigned.
       if (
-        patch.assignedToEmail &&
+        patch.assignees.length > 0 &&
         existing.status === 'requested' &&
         body.status === undefined
       ) {
         patch.status = 'assigned';
       }
-      // Clearing the assignee on an "assigned" task rolls it back to "requested".
-      if (!patch.assignedToEmail && existing.status === 'assigned' && body.status === undefined) {
+      // Clearing all assignees on an "assigned" task rolls it back to "requested".
+      if (
+        patch.assignees.length === 0 &&
+        existing.status === 'assigned' &&
+        body.status === undefined
+      ) {
         patch.status = 'requested';
       }
     }
@@ -151,11 +154,13 @@ export async function PATCH(
     const updated = await updateTask(id, patch);
     if (!updated) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
 
-    // Best-effort notifications (no-ops unless RESEND_API_KEY is set).
-    const newlyAssigned =
-      !!updated.assignedToEmail &&
-      updated.assignedToEmail.toLowerCase() !== existing.assignedToEmail.toLowerCase();
-    if (newlyAssigned) await notifyAssigned(updated, email);
+    // Best-effort notifications (no-ops unless email is configured).
+    // Notify only assignees who were newly added by this update.
+    const before = new Set(existing.assignees.map((a) => a.email.toLowerCase()));
+    const newlyAdded = updated.assignees.filter(
+      (a) => !before.has(a.email.toLowerCase())
+    );
+    if (newlyAdded.length > 0) await notifyAssignees(updated, newlyAdded, email);
     if (updated.status === 'done' && existing.status !== 'done')
       await notifyDone(updated, email);
 

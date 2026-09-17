@@ -119,8 +119,10 @@ function shell(heading: string, task: Task, introHtml: string): string {
     ['Category', esc(task.category)],
   ];
   if (task.dueDate) rows.push(['Due', esc(task.dueDate)]);
-  if (task.assignedToName || task.assignedToEmail)
-    rows.push(['Assignee', esc(task.assignedToName || task.assignedToEmail)]);
+  if (task.assignees.length > 0) {
+    const label = task.assignees.length > 1 ? 'Assignees' : 'Assignee';
+    rows.push([label, esc(task.assignees.map((a) => a.name || a.email).join(', '))]);
+  }
   rows.push(['Requested by', esc(task.requestedByName || task.requestedByEmail)]);
 
   const detailRows = rows
@@ -163,17 +165,25 @@ function shell(heading: string, task: Task, introHtml: string): string {
 
 // ─── Notifications ────────────────────────────────────────────────
 
-/** Email the assignee that a task was assigned to them. */
-export async function notifyAssigned(task: Task, actorEmail?: string): Promise<void> {
-  if (!emailEnabled() || !task.assignedToEmail) return;
-  if (actorEmail && actorEmail.toLowerCase() === task.assignedToEmail.toLowerCase())
-    return; // don't email someone about their own action
+/** Email each given assignee that a task was assigned to them. */
+export async function notifyAssignees(
+  task: Task,
+  targets: { email: string; name?: string }[],
+  actorEmail?: string
+): Promise<void> {
+  if (!emailEnabled() || targets.length === 0) return;
   const html = shell(
     'A task was assigned to you',
     task,
     `${esc(task.requestedByName || 'Someone')} needs this handled. Here are the details:`
   );
-  await send(task.assignedToEmail, `New task assigned: ${task.title}`, html);
+  const subject = `New task assigned: ${task.title}`;
+  await Promise.all(
+    targets
+      // Don't email someone about their own action.
+      .filter((t) => t.email && (!actorEmail || t.email.toLowerCase() !== actorEmail.toLowerCase()))
+      .map((t) => send(t.email, subject, html))
+  );
 }
 
 /** Email the manager(s) that a new request came in. */
@@ -206,7 +216,7 @@ export async function notifyDone(task: Task, actorEmail?: string): Promise<void>
     'Your request is done ✅',
     task,
     `${esc(
-      task.assignedToName || 'The team'
+      task.assignees.map((a) => a.name || a.email).join(', ') || 'The team'
     )} marked your request as done.`
   );
   await send(task.requestedByEmail, `Done: ${task.title}`, html);
