@@ -11,7 +11,7 @@ import {
   normalizeAssignees,
   TasksNotConfiguredError,
 } from '@/lib/tasks-store';
-import { notifyAssignees, notifyDone } from '@/lib/email';
+import { notifyAssignees, notifyStatusChange, notifyComment } from '@/lib/email';
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 import { TASK_STATUS_ORDER } from '@/lib/types';
 
@@ -140,11 +140,10 @@ export async function PATCH(
     }
 
     // ── Comment (any signed-in user in the workspace) ──
+    let addedComment: ReturnType<typeof makeComment> | null = null;
     if (body.addComment !== undefined && body.addComment.trim()) {
-      patch.comments = [
-        ...existing.comments,
-        makeComment(email, name, body.addComment.trim()),
-      ];
+      addedComment = makeComment(email, name, body.addComment.trim());
+      patch.comments = [...existing.comments, addedComment];
     }
 
     if (Object.keys(patch).length === 0) {
@@ -155,14 +154,17 @@ export async function PATCH(
     if (!updated) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
 
     // Best-effort notifications (no-ops unless email is configured).
-    // Notify only assignees who were newly added by this update.
+    // Newly added assignees get the "assigned to you" email.
     const before = new Set(existing.assignees.map((a) => a.email.toLowerCase()));
     const newlyAdded = updated.assignees.filter(
       (a) => !before.has(a.email.toLowerCase())
     );
     if (newlyAdded.length > 0) await notifyAssignees(updated, newlyAdded, email);
-    if (updated.status === 'done' && existing.status !== 'done')
-      await notifyDone(updated, email);
+    // A status change notifies the assignees + requester.
+    if (updated.status !== existing.status)
+      await notifyStatusChange(updated, email);
+    // A new comment notifies the assignees + requester.
+    if (addedComment) await notifyComment(updated, addedComment, email);
 
     return NextResponse.json({ task: updated });
   } catch (err) {

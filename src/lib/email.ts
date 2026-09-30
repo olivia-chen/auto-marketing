@@ -109,7 +109,12 @@ async function send(to: string, subject: string, html: string): Promise<void> {
 
 // ─── Shared HTML shell ────────────────────────────────────────────
 
-function shell(heading: string, task: Task, introHtml: string): string {
+function shell(
+  heading: string,
+  task: Task,
+  introHtml: string,
+  extraHtml = ''
+): string {
   const url = `${appUrl()}/workflow`;
   const pri = TASK_PRIORITY_CONFIG[task.priority]?.label || task.priority;
   const status = TASK_STATUS_CONFIG[task.status]?.label || task.status;
@@ -154,6 +159,7 @@ function shell(heading: string, task: Task, introHtml: string): string {
           ${desc}
           <table style="margin-top:12px;border-collapse:collapse;">${detailRows}</table>
         </div>
+        ${extraHtml}
         <a href="${url}" style="display:inline-block;margin-top:20px;background:#0f766e;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;">Open the workflow board</a>
       </div>
     </div>
@@ -207,17 +213,78 @@ export async function notifyNewRequest(
   );
 }
 
-/** Email the requester that their task is done. */
-export async function notifyDone(task: Task, actorEmail?: string): Promise<void> {
-  if (!emailEnabled() || !task.requestedByEmail) return;
-  if (actorEmail && actorEmail.toLowerCase() === task.requestedByEmail.toLowerCase())
-    return;
-  const html = shell(
-    'Your request is done ✅',
-    task,
-    `${esc(
-      task.assignees.map((a) => a.name || a.email).join(', ') || 'The team'
-    )} marked your request as done.`
+/**
+ * Everyone with a stake in a task: its assignees plus the requester,
+ * de-duplicated by email.
+ */
+function interestedRecipients(task: Task): { email: string; name: string }[] {
+  const map = new Map<string, string>();
+  for (const a of task.assignees) {
+    if (a.email) map.set(a.email.toLowerCase(), a.name || a.email);
+  }
+  if (task.requestedByEmail) {
+    map.set(
+      task.requestedByEmail.toLowerCase(),
+      task.requestedByName || task.requestedByEmail
+    );
+  }
+  return Array.from(map.entries()).map(([email, name]) => ({ email, name }));
+}
+
+async function sendToInterested(
+  task: Task,
+  actorEmail: string | undefined,
+  subject: string,
+  html: string
+): Promise<void> {
+  if (!emailEnabled()) return;
+  const recipients = interestedRecipients(task).filter(
+    (r) => !actorEmail || r.email.toLowerCase() !== actorEmail.toLowerCase()
   );
-  await send(task.requestedByEmail, `Done: ${task.title}`, html);
+  await Promise.all(recipients.map((r) => send(r.email, subject, html)));
+}
+
+/** Email the assignees + requester that a comment was added. */
+export async function notifyComment(
+  task: Task,
+  comment: { authorName: string; author: string; text: string },
+  actorEmail?: string
+): Promise<void> {
+  if (!emailEnabled()) return;
+  const author = esc(comment.authorName || comment.author || 'Someone');
+  const quote = `
+    <div style="margin-top:16px;background:#f0fdfa;border:1px solid #99f6e4;border-left:4px solid #0f766e;border-radius:8px;padding:12px 16px;">
+      <p style="margin:0 0 4px;font-size:12px;color:#0f766e;font-weight:600;">${author} commented</p>
+      <p style="margin:0;font-size:14px;color:#134e4a;line-height:1.5;white-space:pre-wrap;">${esc(
+        comment.text
+      )}</p>
+    </div>`;
+  const html = shell(
+    'New comment on a request',
+    task,
+    `${author} left a comment on this request:`,
+    quote
+  );
+  await sendToInterested(task, actorEmail, `New comment on: ${task.title}`, html);
+}
+
+/** Email the assignees + requester that the status changed. */
+export async function notifyStatusChange(
+  task: Task,
+  actorEmail?: string
+): Promise<void> {
+  if (!emailEnabled()) return;
+  const statusLabel = TASK_STATUS_CONFIG[task.status]?.label || task.status;
+  const done = task.status === 'done';
+  const html = shell(
+    done ? 'Request marked done ✅' : `Status updated → ${statusLabel}`,
+    task,
+    done
+      ? 'This request has been marked done.'
+      : `This request moved to <strong>${esc(statusLabel)}</strong>.`
+  );
+  const subject = done
+    ? `Done: ${task.title}`
+    : `Status → ${statusLabel}: ${task.title}`;
+  await sendToInterested(task, actorEmail, subject, html);
 }
