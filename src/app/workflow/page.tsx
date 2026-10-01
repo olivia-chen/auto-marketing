@@ -837,6 +837,7 @@ function TaskDetailDialog({
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
   const [comment, setComment] = useState('');
 
   const me = viewer.email.toLowerCase();
@@ -857,6 +858,8 @@ function TaskDetailDialog({
         if (!res.ok) throw new Error(data.error || 'Update failed');
         onUpdated(data.task);
         if (clearComment) setComment('');
+        setSaved(true);
+        setTimeout(() => setSaved(false), 1500);
       } catch (e) {
         setErr((e as Error).message);
       } finally {
@@ -905,6 +908,18 @@ function TaskDetailDialog({
             )}
           </DialogDescription>
         </DialogHeader>
+
+        {(err || saved) && (
+          <div
+            className={`sticky top-0 z-10 -mt-1 mb-1 rounded-md px-3 py-2 text-sm ${
+              err
+                ? 'bg-red-50 border border-red-200 text-red-700'
+                : 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+            }`}
+          >
+            {err ? err : 'Saved ✓'}
+          </div>
+        )}
 
         <div className="space-y-4 py-1">
           {task.description && (
@@ -1085,8 +1100,6 @@ function TaskDetailDialog({
               </Button>
             </div>
           </div>
-
-          {err && <p className="text-sm text-red-600">{err}</p>}
         </div>
 
         <DialogFooter className="flex items-center justify-between sm:justify-between">
