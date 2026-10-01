@@ -17,11 +17,12 @@ import { v4 as uuidv4 } from 'uuid';
 import type {
   Task,
   TaskAssignee,
+  AssigneeStatus,
   TaskComment,
   TaskPriority,
   TaskStatus,
 } from './types';
-import { TASK_STATUS_ORDER } from './types';
+import { TASK_STATUS_ORDER, ASSIGNEE_STATUS_ORDER, deriveTaskStatus } from './types';
 
 const SPREADSHEET_NAME = 'TJCF Marketing Workflow';
 const TAB_NAME = 'Tasks';
@@ -268,13 +269,21 @@ function rowToTask(row: string[]): Task | null {
   // Assignees: prefer the JSON column (16th, index 15); fall back to the
   // legacy single-assignee columns (8/9) for rows written before this change.
   let assignees: TaskAssignee[] = [];
+  const statusToAssignee = (s: string): AssigneeStatus => {
+    if (s === 'done' || s === 'review' || s === 'in_progress') return s;
+    return 'todo';
+  };
   try {
     if (row[15]) {
       const parsed = JSON.parse(row[15]);
       if (Array.isArray(parsed)) {
         assignees = parsed
           .filter((a) => a && a.email)
-          .map((a) => ({ email: String(a.email), name: String(a.name || a.email) }));
+          .map((a) => ({
+            email: String(a.email),
+            name: String(a.name || a.email),
+            status: ASSIGNEE_STATUS_ORDER.includes(a.status) ? a.status : 'todo',
+          }));
       }
     }
   } catch {
@@ -283,7 +292,13 @@ function rowToTask(row: string[]): Task | null {
   if (assignees.length === 0 && row[8]) {
     const emails = row[8].split(',').map((s) => s.trim()).filter(Boolean);
     const names = (row[9] || '').split(',').map((s) => s.trim());
-    assignees = emails.map((email, i) => ({ email, name: names[i] || email }));
+    // Legacy rows had one overall status — seed each migrated assignee from it.
+    const seeded = statusToAssignee(row[5] || '');
+    assignees = emails.map((email, i) => ({
+      email,
+      name: names[i] || email,
+      status: seeded,
+    }));
   }
 
   const status = (row[5] || 'requested') as TaskStatus;
@@ -307,7 +322,8 @@ function rowToTask(row: string[]): Task | null {
 
 /**
  * Coerce arbitrary client input into a clean, de-duplicated assignee list.
- * Accepts an array of { email, name } objects or plain email strings.
+ * Accepts an array of { email, name, status } objects or plain email strings.
+ * Status defaults to 'todo' and is validated against ASSIGNEE_STATUS_ORDER.
  */
 export function normalizeAssignees(input: unknown): TaskAssignee[] {
   if (!Array.isArray(input)) return [];
@@ -316,18 +332,21 @@ export function normalizeAssignees(input: unknown): TaskAssignee[] {
   for (const item of input) {
     let email = '';
     let name = '';
+    let status: AssigneeStatus = 'todo';
     if (typeof item === 'string') {
       email = item;
     } else if (item && typeof item === 'object') {
       email = String((item as TaskAssignee).email || '');
       name = String((item as TaskAssignee).name || '');
+      const s = (item as TaskAssignee).status;
+      if (s && ASSIGNEE_STATUS_ORDER.includes(s)) status = s;
     }
     email = email.trim();
     if (!email) continue;
     const key = email.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ email, name: name.trim() || email });
+    out.push({ email, name: name.trim() || email, status });
   }
   return out;
 }
@@ -381,13 +400,16 @@ export async function createTask(partial: Partial<Task> & { title: string; reque
 
   const now = new Date().toISOString();
   const assignees = partial.assignees || [];
+  // With assignees, the overall status is rolled up from their statuses;
+  // without, it stays manual (defaults to "requested").
+  const rolled = deriveTaskStatus(assignees);
   const task: Task = {
     id: uuidv4(),
     title: partial.title,
     description: partial.description || '',
     category: partial.category || 'General',
     priority: partial.priority || 'medium',
-    status: partial.status || (assignees.length > 0 ? 'assigned' : 'requested'),
+    status: rolled ?? partial.status ?? 'requested',
     requestedByEmail: partial.requestedByEmail,
     requestedByName: partial.requestedByName || partial.requestedByEmail,
     assignees,
@@ -443,6 +465,11 @@ export async function updateTask(
     createdAt: current.createdAt,
     updatedAt: new Date().toISOString(),
   };
+
+  // Keep the overall status rolled up from assignees whenever any exist, so
+  // the board column always reflects everyone's individual progress.
+  const rolled = deriveTaskStatus(updated.assignees);
+  if (rolled) updated.status = rolled;
 
   // Row 1 is the header, so data row `index` lives at sheet row index+2.
   const sheetRow = index + 2;

@@ -288,9 +288,48 @@ export interface TaskComment {
   at: string; // ISO timestamp
 }
 
+// ─── Per-assignee progress status ─────────────────────────────────
+// Each assignee tracks their own progress; the task's overall status
+// (the board column) is rolled up from everyone's, via deriveTaskStatus.
+
+export type AssigneeStatus = 'todo' | 'in_progress' | 'review' | 'done';
+
+export const ASSIGNEE_STATUS_ORDER: AssigneeStatus[] = [
+  'todo',
+  'in_progress',
+  'review',
+  'done',
+];
+
+export const ASSIGNEE_STATUS_CONFIG: Record<
+  AssigneeStatus,
+  { label: string; color: string; dot: string }
+> = {
+  todo: { label: 'To do', color: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' },
+  in_progress: { label: 'In progress', color: 'bg-blue-100 text-blue-700', dot: 'bg-blue-500' },
+  review: { label: 'Review', color: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500' },
+  done: { label: 'Done', color: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500' },
+};
+
 export interface TaskAssignee {
   email: string;
   name: string;
+  status: AssigneeStatus;
+}
+
+/**
+ * Roll a task's overall status up from its assignees' individual statuses.
+ * Returns null when there are no assignees (caller keeps the manual status).
+ */
+export function deriveTaskStatus(
+  assignees: { status: AssigneeStatus }[]
+): TaskStatus | null {
+  if (assignees.length === 0) return null;
+  const s = assignees.map((a) => a.status);
+  if (s.every((x) => x === 'done')) return 'done';
+  if (s.every((x) => x === 'done' || x === 'review')) return 'review';
+  if (s.some((x) => x !== 'todo')) return 'in_progress';
+  return 'assigned';
 }
 
 export interface Task {
@@ -299,7 +338,7 @@ export interface Task {
   description: string;
   category: string; // free-form, e.g. a CampaignType value or "General"
   priority: TaskPriority;
-  status: TaskStatus;
+  status: TaskStatus; // overall; derived from assignees when any exist
   requestedByEmail: string;
   requestedByName: string;
   assignees: TaskAssignee[]; // empty when unassigned; may have several

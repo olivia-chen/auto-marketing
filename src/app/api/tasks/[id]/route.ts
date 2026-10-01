@@ -12,8 +12,8 @@ import {
   TasksNotConfiguredError,
 } from '@/lib/tasks-store';
 import { notifyAssignees, notifyStatusChange, notifyComment } from '@/lib/email';
-import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
-import { TASK_STATUS_ORDER } from '@/lib/types';
+import type { Task, TaskAssignee, AssigneeStatus, TaskPriority, TaskStatus } from '@/lib/types';
+import { ASSIGNEE_STATUS_ORDER } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +25,8 @@ interface PatchBody {
   dueDate?: string;
   activityRef?: string;
   status?: TaskStatus;
-  assignees?: unknown; // array of { email, name } or email strings
+  assignees?: unknown; // array of { email, name, status } or email strings
+  assigneeStatus?: { email?: string; status?: AssigneeStatus }; // one person's progress
   addComment?: string;
 }
 
@@ -62,13 +63,10 @@ export async function PATCH(
     if (!existing) return NextResponse.json({ error: 'Task not found' }, { status: 404 });
 
     const isRequester = existing.requestedByEmail.toLowerCase() === email.toLowerCase();
-    const isAssignee = existing.assignees.some(
-      (a) => a.email.toLowerCase() === email.toLowerCase()
-    );
 
     const patch: Partial<Task> = {};
 
-    // ── Assignment (managers only) ──
+    // ── Assignment membership (managers only) ──
     if (body.assignees !== undefined) {
       if (!manager) {
         return NextResponse.json(
@@ -76,37 +74,42 @@ export async function PATCH(
           { status: 403 }
         );
       }
-      patch.assignees = normalizeAssignees(body.assignees);
-      // Auto-advance from "requested" to "assigned" when first assigned.
-      if (
-        patch.assignees.length > 0 &&
-        existing.status === 'requested' &&
-        body.status === undefined
-      ) {
-        patch.status = 'assigned';
-      }
-      // Clearing all assignees on an "assigned" task rolls it back to "requested".
-      if (
-        patch.assignees.length === 0 &&
-        existing.status === 'assigned' &&
-        body.status === undefined
-      ) {
-        patch.status = 'requested';
-      }
+      const normalized = normalizeAssignees(body.assignees);
+      // Preserve each existing assignee's progress across a membership edit;
+      // people newly added start at 'todo'.
+      patch.assignees = normalized.map((a) => {
+        const prev = existing.assignees.find(
+          (e) => e.email.toLowerCase() === a.email.toLowerCase()
+        );
+        return { email: a.email, name: a.name, status: prev?.status ?? a.status ?? 'todo' };
+      });
     }
 
-    // ── Status (manager or the assignee) ──
-    if (body.status !== undefined) {
-      if (!TASK_STATUS_ORDER.includes(body.status)) {
-        return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
+    // ── Per-assignee progress status (the assignee themselves, or a manager) ──
+    if (body.assigneeStatus !== undefined) {
+      const target = (body.assigneeStatus.email || email).toLowerCase();
+      const newStatus = body.assigneeStatus.status;
+      if (!newStatus || !ASSIGNEE_STATUS_ORDER.includes(newStatus)) {
+        return NextResponse.json({ error: 'Invalid assignee status' }, { status: 400 });
       }
-      if (!manager && !isAssignee) {
+      const isSelf = target === email.toLowerCase();
+      if (!manager && !isSelf) {
         return NextResponse.json(
-          { error: 'Only the assignee or a manager can change status.' },
+          { error: 'You can only change your own progress.' },
           { status: 403 }
         );
       }
-      patch.status = body.status;
+      const base: TaskAssignee[] = patch.assignees ?? existing.assignees;
+      const idx = base.findIndex((a) => a.email.toLowerCase() === target);
+      if (idx === -1) {
+        return NextResponse.json(
+          { error: 'That person is not an assignee on this task.' },
+          { status: 400 }
+        );
+      }
+      patch.assignees = base.map((a, i) =>
+        i === idx ? { ...a, status: newStatus } : a
+      );
     }
 
     // ── Editable content fields (manager or the requester) ──

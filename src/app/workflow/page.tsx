@@ -44,10 +44,13 @@ import {
   TaskStatus,
   TaskPriority,
   TaskAssignee,
+  AssigneeStatus,
   TaskViewer,
   TASK_STATUS_ORDER,
   TASK_STATUS_CONFIG,
   TASK_PRIORITY_CONFIG,
+  ASSIGNEE_STATUS_ORDER,
+  ASSIGNEE_STATUS_CONFIG,
   CAMPAIGN_TYPES,
 } from '@/lib/types';
 import { format, parseISO, isPast } from 'date-fns';
@@ -117,7 +120,7 @@ function AssigneeEditor({
     }
     const name =
       directory.find((d) => d.email.toLowerCase() === email.toLowerCase())?.name || '';
-    onChange([...value, { email, name }]);
+    onChange([...value, { email, name, status: 'todo' }]);
     setInput('');
   };
 
@@ -264,49 +267,62 @@ export default function WorkflowPage() {
     setActiveTask((prev) => (prev && prev.id === id ? null : prev));
   }, []);
 
-  // ── Drag-and-drop between status columns ──
+  // ── Drag-and-drop: a card drop sets the dragger's OWN per-assignee status ──
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null);
 
-  // Only the assignee or a manager may move a task.
-  const canChangeStatus = useCallback(
-    (t: Task) => {
-      if (!viewer) return false;
-      return (
-        viewer.isManager ||
-        t.assignees.some(
-          (a) => a.email.toLowerCase() === viewer.email.toLowerCase()
-        )
+  // You can drag a card only if you're one of its assignees (your own
+  // progress is what moves). Managers set others' progress in the detail view.
+  const myAssigneeStatus = useCallback(
+    (t: Task): AssigneeStatus | null => {
+      if (!viewer) return null;
+      const me = t.assignees.find(
+        (a) => a.email.toLowerCase() === viewer.email.toLowerCase()
       );
+      return me ? me.status : null;
     },
     [viewer]
   );
 
-  const changeStatus = useCallback(
-    async (task: Task, status: TaskStatus) => {
-      if (task.status === status) return;
-      const prevStatus = task.status;
-      // Optimistic move.
-      setTasks((ts) => ts.map((t) => (t.id === task.id ? { ...t, status } : t)));
+  const canDrag = useCallback(
+    (t: Task) => myAssigneeStatus(t) !== null,
+    [myAssigneeStatus]
+  );
+
+  // Map a board column (task status) to the per-assignee status a drop implies.
+  const columnToAssigneeStatus = (col: TaskStatus): AssigneeStatus | null => {
+    switch (col) {
+      case 'assigned':
+        return 'todo';
+      case 'in_progress':
+        return 'in_progress';
+      case 'review':
+        return 'review';
+      case 'done':
+        return 'done';
+      default:
+        return null; // 'requested' has no per-assignee equivalent
+    }
+  };
+
+  const changeMyStatus = useCallback(
+    async (task: Task, status: AssigneeStatus) => {
+      if (myAssigneeStatus(task) === status) return;
       setError(null);
       try {
         const res = await fetch(`/api/tasks/${task.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status }),
+          body: JSON.stringify({ assigneeStatus: { status } }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to update status');
         setTasks((ts) => ts.map((t) => (t.id === task.id ? data.task : t)));
       } catch (e) {
-        // Revert on failure.
-        setTasks((ts) =>
-          ts.map((t) => (t.id === task.id ? { ...t, status: prevStatus } : t))
-        );
         setError((e as Error).message);
       }
     },
-    []
+    [myAssigneeStatus]
   );
 
   return (
@@ -443,6 +459,7 @@ export default function WorkflowPage() {
                   <div
                     onDragOver={(e) => {
                       if (!dragId) return;
+                      if (columnToAssigneeStatus(status) === null) return; // not droppable
                       e.preventDefault(); // allow drop
                       if (dragOverCol !== status) setDragOverCol(status);
                     }}
@@ -457,7 +474,8 @@ export default function WorkflowPage() {
                       setDragOverCol(null);
                       setDragId(null);
                       const t = tasks.find((x) => x.id === id);
-                      if (t) changeStatus(t, status);
+                      const personStatus = columnToAssigneeStatus(status);
+                      if (t && personStatus) changeMyStatus(t, personStatus);
                     }}
                     className={`flex flex-col gap-2 rounded-xl p-2 min-h-[80px] flex-1 transition-colors ${
                       dragOverCol === status
@@ -475,7 +493,7 @@ export default function WorkflowPage() {
                           key={t.id}
                           task={t}
                           onOpen={() => setActiveTask(t)}
-                          draggable={canChangeStatus(t)}
+                          draggable={canDrag(t)}
                           dragging={dragId === t.id}
                           onDragStart={() => setDragId(t.id)}
                           onDragEnd={() => {
@@ -585,10 +603,15 @@ function TaskCard({
                 {task.assignees.slice(0, 3).map((a) => (
                   <span
                     key={a.email}
-                    title={a.name || a.email}
-                    className="h-5 w-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[9px] font-bold ring-2 ring-white"
+                    title={`${a.name || a.email} · ${ASSIGNEE_STATUS_CONFIG[a.status].label}`}
+                    className="relative h-5 w-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[9px] font-bold ring-2 ring-white"
                   >
                     {initials(a.name, a.email)}
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-1 ring-white ${
+                        ASSIGNEE_STATUS_CONFIG[a.status].dot
+                      }`}
+                    />
                   </span>
                 ))}
               </div>
@@ -818,8 +841,6 @@ function TaskDetailDialog({
 
   const me = viewer.email.toLowerCase();
   const isRequester = task.requestedByEmail.toLowerCase() === me;
-  const isAssignee = task.assignees.some((a) => a.email.toLowerCase() === me);
-  const canStatus = viewer.isManager || isAssignee;
   const pri = TASK_PRIORITY_CONFIG[task.priority];
 
   const patch = useCallback(
@@ -910,31 +931,18 @@ function TaskDetailDialog({
             </p>
           )}
 
-          {/* Status + due */}
+          {/* Overall status (read-only — rolled up from assignees) + due */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-xs text-slate-500">Status</Label>
-              {canStatus ? (
-                <Select
-                  value={task.status}
-                  onValueChange={(v) => patch({ status: v as TaskStatus })}
-                >
-                  <SelectTrigger className="h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TASK_STATUS_ORDER.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {TASK_STATUS_CONFIG[s].label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
+              <Label className="text-xs text-slate-500">Overall status</Label>
+              <div className="h-9 flex items-center gap-1.5">
                 <Badge className={`${TASK_STATUS_CONFIG[task.status].color} border-0`}>
                   {TASK_STATUS_CONFIG[task.status].label}
                 </Badge>
-              )}
+                {task.assignees.length > 0 && (
+                  <span className="text-[10px] text-slate-400">from assignees</span>
+                )}
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs text-slate-500">Due date</Label>
@@ -953,13 +961,13 @@ function TaskDetailDialog({
             </div>
           </div>
 
-          {/* Assignment */}
-          <div className="space-y-1.5">
+          {/* Assignees — membership (managers) + per-person progress */}
+          <div className="space-y-2">
             <Label className="text-xs text-slate-500 flex items-center gap-1">
-              <UserPlus className="h-3.5 w-3.5" />{' '}
-              {task.assignees.length > 1 ? 'Assignees' : 'Assignee'}
+              <UserPlus className="h-3.5 w-3.5" /> Assignees & progress
             </Label>
-            {viewer.isManager ? (
+
+            {viewer.isManager && (
               <AssigneeEditor
                 value={task.assignees}
                 onChange={(next) => patch({ assignees: next })}
@@ -967,22 +975,64 @@ function TaskDetailDialog({
                 listId="people-list-detail"
                 disabled={busy}
               />
-            ) : task.assignees.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {task.assignees.map((a) => (
-                  <span
-                    key={a.email}
-                    className="flex items-center gap-1.5 bg-slate-100 rounded-full pl-1 pr-2.5 py-0.5"
-                  >
-                    <span className="h-5 w-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[9px] font-bold">
-                      {initials(a.name, a.email)}
-                    </span>
-                    <span className="text-xs text-slate-700">{a.name || a.email}</span>
-                  </span>
-                ))}
-              </div>
+            )}
+
+            {task.assignees.length === 0 ? (
+              !viewer.isManager && (
+                <p className="text-sm text-slate-400 italic">Unassigned</p>
+              )
             ) : (
-              <p className="text-sm text-slate-400 italic">Unassigned</p>
+              <div className="space-y-1.5">
+                {task.assignees.map((a) => {
+                  const canEdit =
+                    viewer.isManager || a.email.toLowerCase() === me;
+                  return (
+                    <div
+                      key={a.email}
+                      className="flex items-center justify-between gap-2 bg-slate-50 rounded-lg px-2 py-1.5"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="h-6 w-6 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
+                          {initials(a.name, a.email)}
+                        </span>
+                        <span className="text-sm text-slate-700 truncate">
+                          {a.name || a.email}
+                          {a.email.toLowerCase() === me && (
+                            <span className="text-[11px] text-slate-400"> (you)</span>
+                          )}
+                        </span>
+                      </div>
+                      {canEdit ? (
+                        <Select
+                          value={a.status}
+                          onValueChange={(v) =>
+                            patch({
+                              assigneeStatus: { email: a.email, status: v as AssigneeStatus },
+                            })
+                          }
+                        >
+                          <SelectTrigger className="h-8 w-[140px] flex-shrink-0">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ASSIGNEE_STATUS_ORDER.map((s) => (
+                              <SelectItem key={s} value={s}>
+                                {ASSIGNEE_STATUS_CONFIG[s].label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Badge
+                          className={`${ASSIGNEE_STATUS_CONFIG[a.status].color} border-0 flex-shrink-0`}
+                        >
+                          {ASSIGNEE_STATUS_CONFIG[a.status].label}
+                        </Badge>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
 
