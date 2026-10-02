@@ -42,6 +42,8 @@ import {
   ExternalLink,
   Upload,
   Paperclip,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import {
   Task,
@@ -1107,6 +1109,7 @@ function TaskDetailDialog({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [comment, setComment] = useState('');
 
   const me = viewer.email.toLowerCase();
@@ -1156,9 +1159,22 @@ function TaskDetailDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+      <DialogContent
+        className={`max-h-[92vh] overflow-y-auto transition-all ${
+          expanded ? 'max-w-4xl' : 'max-w-xl'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="absolute right-11 top-4 h-6 w-6 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+          title={expanded ? 'Shrink' : 'Expand'}
+          aria-label={expanded ? 'Shrink dialog' : 'Expand dialog'}
+        >
+          {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        </button>
         <DialogHeader>
-          <div className="flex items-start justify-between gap-3 pr-6">
+          <div className="flex items-start justify-between gap-3 pr-16">
             <DialogTitle className="text-base leading-snug">{task.title}</DialogTitle>
             <Badge className={`${pri.color} border-0 text-[11px] flex-shrink-0`}>
               {pri.label}
@@ -1362,7 +1378,7 @@ function TaskDetailDialog({
             <Label className="text-xs text-slate-500 flex items-center gap-1">
               <MessageSquare className="h-3.5 w-3.5" /> Activity & comments
             </Label>
-            <div className="space-y-2 max-h-52 overflow-y-auto">
+            <div className={`space-y-2 overflow-y-auto ${expanded ? 'max-h-96' : 'max-h-52'}`}>
               {task.comments.length === 0 ? (
                 <p className="text-xs text-slate-400 italic">No comments yet.</p>
               ) : (
