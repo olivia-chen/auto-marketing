@@ -1160,8 +1160,10 @@ function TaskDetailDialog({
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent
-        className={`max-h-[92vh] overflow-y-auto transition-all ${
-          expanded ? 'max-w-4xl' : 'max-w-xl'
+        className={`overflow-y-auto transition-all ${
+          expanded
+            ? 'w-[96vw] sm:max-w-[1400px] h-[92vh]'
+            : 'max-h-[92vh] sm:max-w-xl'
         }`}
       >
         <button
