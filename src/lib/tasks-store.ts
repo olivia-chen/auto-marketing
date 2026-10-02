@@ -83,6 +83,18 @@ export function serviceAccountEmail(): string {
   }
 }
 
+/** The edit URL of the backing workflow spreadsheet, or null if unavailable. */
+export async function getSpreadsheetUrl(): Promise<string | null> {
+  const auth = getAuth();
+  if (!auth) return null;
+  try {
+    const id = await getSpreadsheetId(auth); // cached after the first lookup
+    return `https://docs.google.com/spreadsheets/d/${id}/edit`;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Roles ───────────────────────────────────────────────────────────
 
 /**

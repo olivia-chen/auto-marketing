@@ -9,6 +9,7 @@ import {
   serviceAccountEmail,
   managerEmails,
   normalizeAssignees,
+  getSpreadsheetUrl,
   TasksNotConfiguredError,
   TasksStorageError,
 } from '@/lib/tasks-store';
@@ -45,7 +46,10 @@ export async function GET() {
 
   try {
     const tasks = await listTasks();
-    return NextResponse.json({ tasks, viewer });
+    // Only expose the raw sheet link to managers (only people the sheet is
+    // shared with can open it anyway).
+    const spreadsheetUrl = viewer.isManager ? await getSpreadsheetUrl() : null;
+    return NextResponse.json({ tasks, viewer, spreadsheetUrl });
   } catch (err) {
     if (err instanceof TasksNotConfiguredError) return notConfiguredResponse();
     if (err instanceof TasksStorageError) return NextResponse.json({ error: err.message }, { status: 409 });

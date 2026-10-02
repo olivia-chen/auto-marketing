@@ -38,6 +38,8 @@ import {
   ClipboardList,
   RefreshCw,
   X,
+  Table2,
+  ExternalLink,
 } from 'lucide-react';
 import {
   Task,
@@ -201,6 +203,7 @@ export default function WorkflowPage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [showNew, setShowNew] = useState(false);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [sheetUrl, setSheetUrl] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -210,6 +213,7 @@ export default function WorkflowPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to load');
       setTasks(data.tasks || []);
       setViewer(data.viewer || null);
+      setSheetUrl(data.spreadsheetUrl || null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -422,13 +426,28 @@ export default function WorkflowPage() {
               </Button>
             ))}
           </div>
-          <Button
-            size="sm"
-            className="h-8 gap-1.5 bg-teal-600 hover:bg-teal-700 text-xs"
-            onClick={() => setShowNew(true)}
-          >
-            <Plus className="h-4 w-4" /> New request
-          </Button>
+          <div className="flex items-center gap-2">
+            {sheetUrl && (
+              <a href={sheetUrl} target="_blank" rel="noreferrer">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs border-slate-200 text-slate-600 hover:bg-slate-50"
+                  title="Open the full request history in Google Sheets"
+                >
+                  <Table2 className="h-4 w-4" /> History sheet
+                  <ExternalLink className="h-3 w-3" />
+                </Button>
+              </a>
+            )}
+            <Button
+              size="sm"
+              className="h-8 gap-1.5 bg-teal-600 hover:bg-teal-700 text-xs"
+              onClick={() => setShowNew(true)}
+            >
+              <Plus className="h-4 w-4" /> New request
+            </Button>
+          </div>
         </div>
 
         {error && (
