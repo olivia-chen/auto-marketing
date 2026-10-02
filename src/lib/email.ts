@@ -115,7 +115,7 @@ function shell(
   introHtml: string,
   extraHtml = ''
 ): string {
-  const url = `${appUrl()}/workflow`;
+  const url = `${appUrl()}/workflow?task=${encodeURIComponent(task.id)}`;
   const pri = TASK_PRIORITY_CONFIG[task.priority]?.label || task.priority;
   const status = TASK_STATUS_CONFIG[task.status]?.label || task.status;
   const rows: [string, string][] = [
@@ -160,7 +160,7 @@ function shell(
           <table style="margin-top:12px;border-collapse:collapse;">${detailRows}</table>
         </div>
         ${extraHtml}
-        <a href="${url}" style="display:inline-block;margin-top:20px;background:#0f766e;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;">Open the workflow board</a>
+        <a href="${url}" style="display:inline-block;margin-top:20px;background:#0f766e;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;">Open this request</a>
       </div>
     </div>
     <p style="max-width:520px;margin:12px auto 0;color:#94a3b8;font-size:12px;text-align:center;">
@@ -184,12 +184,19 @@ export async function notifyAssignees(
     `${esc(task.requestedByName || 'Someone')} needs this handled. Here are the details:`
   );
   const subject = `New task assigned: ${task.title}`;
-  await Promise.all(
-    targets
-      // Don't email someone about their own action.
-      .filter((t) => t.email && (!actorEmail || t.email.toLowerCase() !== actorEmail.toLowerCase()))
-      .map((t) => send(t.email, subject, html))
-  );
+  // Include the task's CC list as additional recipients.
+  const seen = new Set<string>();
+  const recipients = [
+    ...targets.map((t) => t.email),
+    ...(task.cc || []),
+  ].filter((e) => {
+    if (!e) return false;
+    const k = e.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return !actorEmail || k !== actorEmail.toLowerCase();
+  });
+  await Promise.all(recipients.map((to) => send(to, subject, html)));
 }
 
 /** Email the manager(s) that a new request came in. */
@@ -199,9 +206,14 @@ export async function notifyNewRequest(
   actorEmail?: string
 ): Promise<void> {
   if (!emailEnabled() || managerEmails.length === 0) return;
-  const recipients = managerEmails.filter(
-    (m) => !actorEmail || m.toLowerCase() !== actorEmail.toLowerCase()
-  );
+  const seen = new Set<string>();
+  const recipients = [...managerEmails, ...(task.cc || [])].filter((m) => {
+    if (!m) return false;
+    const k = m.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return !actorEmail || k !== actorEmail.toLowerCase();
+  });
   if (recipients.length === 0) return;
   const html = shell(
     'New marketing request',
@@ -214,8 +226,8 @@ export async function notifyNewRequest(
 }
 
 /**
- * Everyone with a stake in a task: its assignees plus the requester,
- * de-duplicated by email.
+ * Everyone with a stake in a task: its assignees, the requester, plus any
+ * CC'd emails, de-duplicated by email.
  */
 function interestedRecipients(task: Task): { email: string; name: string }[] {
   const map = new Map<string, string>();
@@ -227,6 +239,9 @@ function interestedRecipients(task: Task): { email: string; name: string }[] {
       task.requestedByEmail.toLowerCase(),
       task.requestedByName || task.requestedByEmail
     );
+  }
+  for (const c of task.cc || []) {
+    if (c && !map.has(c.toLowerCase())) map.set(c.toLowerCase(), c);
   }
   return Array.from(map.entries()).map(([email, name]) => ({ email, name }));
 }

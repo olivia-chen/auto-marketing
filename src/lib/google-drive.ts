@@ -235,6 +235,43 @@ export async function getOtherFolder() {
 }
 
 /**
+ * Get (or create) the "Workflow Attachments" folder under the root, used for
+ * files uploaded against workflow tasks. Returns the folder id.
+ */
+export async function getWorkflowAttachmentsFolderId(): Promise<string> {
+  const auth = getDriveAuth();
+  if (!auth) throw new Error('Google Drive not configured');
+
+  const drive = google.drive({ version: 'v3', auth });
+
+  let rootId: string;
+  let sharedDriveId: string | undefined;
+  if (ROOT_FOLDER_ID) {
+    try {
+      const info = await drive.files.get({
+        fileId: ROOT_FOLDER_ID,
+        fields: 'id,driveId',
+        supportsAllDrives: true,
+      });
+      sharedDriveId = info.data.driveId || undefined;
+    } catch {
+      // fall through — getOrCreateFolder will surface a clear error
+    }
+    rootId = ROOT_FOLDER_ID;
+  } else {
+    rootId = (await getOrCreateFolder(drive, ROOT_FOLDER_NAME)).id;
+  }
+
+  const folder = await getOrCreateFolder(
+    drive,
+    'Workflow Attachments',
+    rootId,
+    sharedDriveId
+  );
+  return folder.id;
+}
+
+/**
  * List image/video files in a Drive folder.
  */
 export async function listFolderFiles(folderId: string) {

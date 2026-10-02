@@ -9,6 +9,8 @@ import {
   isConfigured,
   makeComment,
   normalizeAssignees,
+  normalizeEmails,
+  normalizeAttachments,
   TasksNotConfiguredError,
 } from '@/lib/tasks-store';
 import { notifyAssignees, notifyStatusChange, notifyComment } from '@/lib/email';
@@ -27,6 +29,8 @@ interface PatchBody {
   status?: TaskStatus;
   assignees?: unknown; // array of { email, name, status } or email strings
   assigneeStatus?: { email?: string; status?: AssigneeStatus }; // one person's progress
+  cc?: unknown; // array of emails
+  attachments?: unknown; // full replacement array of attachments
   addComment?: string;
 }
 
@@ -140,6 +144,31 @@ export async function PATCH(
       if (body.priority !== undefined) patch.priority = body.priority;
       if (body.dueDate !== undefined) patch.dueDate = body.dueDate;
       if (body.activityRef !== undefined) patch.activityRef = body.activityRef;
+    }
+
+    // ── CC list (manager or the requester) ──
+    if (body.cc !== undefined) {
+      if (!manager && !isRequester) {
+        return NextResponse.json(
+          { error: 'Only the requester or a manager can change the CC list.' },
+          { status: 403 }
+        );
+      }
+      patch.cc = normalizeEmails(body.cc);
+    }
+
+    // ── Attachments (manager, requester, or an assignee) ──
+    if (body.attachments !== undefined) {
+      const isAssignee = existing.assignees.some(
+        (a) => a.email.toLowerCase() === email.toLowerCase()
+      );
+      if (!manager && !isRequester && !isAssignee) {
+        return NextResponse.json(
+          { error: 'You cannot change attachments on this task.' },
+          { status: 403 }
+        );
+      }
+      patch.attachments = normalizeAttachments(body.attachments);
     }
 
     // ── Comment (any signed-in user in the workspace) ──

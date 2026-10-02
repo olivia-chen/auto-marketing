@@ -17,6 +17,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type {
   Task,
   TaskAssignee,
+  TaskAttachment,
   AssigneeStatus,
   TaskComment,
   TaskPriority,
@@ -44,8 +45,10 @@ const HEADER = [
   'comments', // JSON string
   'createdAt',
   'updatedAt',
-  'assignees', // JSON string — authoritative list of { email, name }
-] as const; // 16 columns → A..P
+  'assignees', // JSON string — authoritative list of { email, name, status }
+  'cc', // JSON string — extra CC emails
+  'attachments', // JSON string — [{ name, url, thumbnailUrl, mimeType }]
+] as const; // 18 columns → A..R
 
 // ─── Auth ────────────────────────────────────────────────────────────
 
@@ -265,6 +268,8 @@ function taskToRow(t: Task): string[] {
     t.createdAt,
     t.updatedAt,
     JSON.stringify(assignees), // authoritative
+    JSON.stringify(t.cc || []),
+    JSON.stringify(t.attachments || []),
   ];
 }
 
@@ -314,6 +319,22 @@ function rowToTask(row: string[]): Task | null {
   }
 
   const status = (row[5] || 'requested') as TaskStatus;
+
+  const parseJsonArray = <T,>(cell: string | undefined): T[] => {
+    try {
+      const v = cell ? JSON.parse(cell) : [];
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  };
+  const cc = parseJsonArray<string>(row[16])
+    .map((e) => String(e).trim())
+    .filter(Boolean);
+  const attachments = parseJsonArray<TaskAttachment>(row[17]).filter(
+    (a) => a && a.url
+  );
+
   return {
     id: row[0],
     title: row[1] || '',
@@ -326,6 +347,8 @@ function rowToTask(row: string[]): Task | null {
     assignees,
     dueDate: row[10] || '',
     activityRef: row[11] || '',
+    cc,
+    attachments,
     comments,
     createdAt: row[13] || '',
     updatedAt: row[14] || '',
@@ -363,6 +386,44 @@ export function normalizeAssignees(input: unknown): TaskAssignee[] {
   return out;
 }
 
+/** Clean, de-duplicated list of plain emails (for CC). */
+export function normalizeEmails(input: unknown): string[] {
+  if (!Array.isArray(input)) {
+    if (typeof input === 'string') input = input.split(/[,;\s]+/);
+    else return [];
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of input as unknown[]) {
+    const email = String(item || '').trim();
+    if (!email || !email.includes('@')) continue;
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(email);
+  }
+  return out;
+}
+
+/** Clean a client-supplied attachments array. */
+export function normalizeAttachments(input: unknown): TaskAttachment[] {
+  if (!Array.isArray(input)) return [];
+  const out: TaskAttachment[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== 'object') continue;
+    const a = item as TaskAttachment;
+    const url = String(a.url || '').trim();
+    if (!url) continue;
+    out.push({
+      name: String(a.name || 'file').trim(),
+      url,
+      thumbnailUrl: a.thumbnailUrl ? String(a.thumbnailUrl) : undefined,
+      mimeType: a.mimeType ? String(a.mimeType) : undefined,
+    });
+  }
+  return out;
+}
+
 // ─── Public API ────────────────────────────────────────────────────────
 
 export class TasksNotConfiguredError extends Error {
@@ -388,7 +449,7 @@ async function readAllRows(): Promise<{ rows: string[][]; spreadsheetId: string 
   await ensureTab(sheets, spreadsheetId);
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A2:P`,
+    range: `'${TAB_NAME}'!A2:R`,
   });
   return { rows: res.data.values || [], spreadsheetId };
 }
@@ -427,6 +488,8 @@ export async function createTask(partial: Partial<Task> & { title: string; reque
     assignees,
     dueDate: partial.dueDate || '',
     activityRef: partial.activityRef || '',
+    cc: partial.cc || [],
+    attachments: partial.attachments || [],
     comments: partial.comments || [],
     createdAt: now,
     updatedAt: now,
@@ -461,7 +524,7 @@ export async function updateTask(
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A2:P`,
+    range: `'${TAB_NAME}'!A2:R`,
   });
   const rows = res.data.values || [];
   const index = rows.findIndex((r) => r[0] === id);
@@ -487,7 +550,7 @@ export async function updateTask(
   const sheetRow = index + 2;
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A${sheetRow}:P${sheetRow}`,
+    range: `'${TAB_NAME}'!A${sheetRow}:R${sheetRow}`,
     valueInputOption: 'RAW',
     requestBody: { values: [taskToRow(updated)] },
   });
@@ -516,7 +579,7 @@ export async function deleteTask(id: string): Promise<boolean> {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A2:P`,
+    range: `'${TAB_NAME}'!A2:R`,
   });
   const rows = res.data.values || [];
   const index = rows.findIndex((r) => r[0] === id);

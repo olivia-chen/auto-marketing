@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useSession, signOut } from 'next-auth/react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -40,6 +40,8 @@ import {
   X,
   Table2,
   ExternalLink,
+  Upload,
+  Paperclip,
 } from 'lucide-react';
 import {
   Task,
@@ -47,6 +49,7 @@ import {
   TaskPriority,
   TaskAssignee,
   AssigneeStatus,
+  TaskAttachment,
   TaskViewer,
   TASK_STATUS_ORDER,
   TASK_STATUS_CONFIG,
@@ -192,6 +195,212 @@ function AssigneeEditor({
   );
 }
 
+// ─── Email chips (plain emails, e.g. for CC) ──────────────────────
+
+function EmailChips({
+  value,
+  onChange,
+  directory,
+  listId,
+  disabled = false,
+  placeholder = 'Add an email…',
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  directory: { email: string; name: string }[];
+  listId: string;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  const [input, setInput] = useState('');
+  const add = () => {
+    const email = input.trim();
+    if (!email || !email.includes('@')) {
+      setInput('');
+      return;
+    }
+    if (!value.some((v) => v.toLowerCase() === email.toLowerCase())) {
+      onChange([...value, email]);
+    }
+    setInput('');
+  };
+  return (
+    <div className="space-y-2">
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((email) => (
+            <span
+              key={email}
+              className="flex items-center gap-1 bg-slate-100 border border-slate-200 rounded-full pl-2.5 pr-1 py-0.5 text-xs text-slate-700"
+            >
+              {email}
+              <button
+                type="button"
+                onClick={() => onChange(value.filter((v) => v !== email))}
+                disabled={disabled}
+                className="h-4 w-4 rounded-full hover:bg-slate-300 flex items-center justify-center text-slate-500"
+                title="Remove"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Input
+          list={listId}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder={placeholder}
+          className="h-9"
+          disabled={disabled}
+        />
+        <datalist id={listId}>
+          {directory.map((d) => (
+            <option key={d.email} value={d.email}>
+              {d.name}
+            </option>
+          ))}
+        </datalist>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-9 flex-shrink-0"
+          onClick={add}
+          disabled={disabled || !input.trim()}
+        >
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Attachment uploader ──────────────────────────────────────────
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1] || '');
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function AttachmentEditor({
+  value,
+  onChange,
+  disabled = false,
+  readOnly = false,
+}: {
+  value: TaskAttachment[];
+  onChange?: (next: TaskAttachment[]) => void;
+  disabled?: boolean;
+  readOnly?: boolean;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFiles = async (files: FileList) => {
+    setUploading(true);
+    setErr(null);
+    try {
+      const added: TaskAttachment[] = [];
+      for (const file of Array.from(files)) {
+        const fileData = await fileToBase64(file);
+        const res = await fetch('/api/tasks/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName: file.name, mimeType: file.type, fileData }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+        added.push(data.attachment);
+      }
+      onChange?.([...value, ...added]);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((a, i) => (
+            <span
+              key={`${a.url}-${i}`}
+              className="flex items-center gap-1.5 bg-slate-100 border border-slate-200 rounded-lg pl-2 pr-1 py-1 text-xs"
+            >
+              <a
+                href={a.url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1 text-teal-700 hover:underline max-w-[160px] truncate"
+                title={a.name}
+              >
+                <Paperclip className="h-3 w-3 flex-shrink-0" />
+                <span className="truncate">{a.name}</span>
+              </a>
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => onChange?.(value.filter((_, j) => j !== i))}
+                  disabled={disabled}
+                  className="h-4 w-4 rounded-full hover:bg-slate-300 flex items-center justify-center text-slate-500"
+                  title="Remove"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      {!readOnly && (
+        <>
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept="image/*,application/pdf"
+            className="hidden"
+            onChange={(e) => e.target.files && handleFiles(e.target.files)}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-9 gap-1.5"
+            onClick={() => inputRef.current?.click()}
+            disabled={disabled || uploading}
+          >
+            {uploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4" />
+            )}
+            {uploading ? 'Uploading…' : 'Attach file'}
+          </Button>
+        </>
+      )}
+      {err && <p className="text-xs text-red-600">{err}</p>}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────
 
 export default function WorkflowPage() {
@@ -224,6 +433,27 @@ export default function WorkflowPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Deep link: open a specific task when arriving via ?task=<id> (from an email).
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandled.current || tasks.length === 0) return;
+    let id: string | null = null;
+    try {
+      id = new URLSearchParams(window.location.search).get('task');
+    } catch {
+      id = null;
+    }
+    if (!id) {
+      deepLinkHandled.current = true;
+      return;
+    }
+    const match = tasks.find((t) => t.id === id);
+    if (match) {
+      setActiveTask(match);
+      deepLinkHandled.current = true;
+    }
+  }, [tasks]);
 
   // Directory of known people (for assignment autocomplete)
   const directory = useMemo(() => {
@@ -687,6 +917,8 @@ function NewRequestDialog({
   const [dueDate, setDueDate] = useState('');
   const [activityRef, setActivityRef] = useState('');
   const [assignees, setAssignees] = useState<TaskAssignee[]>([]);
+  const [cc, setCc] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -708,6 +940,8 @@ function NewRequestDialog({
           priority,
           dueDate,
           activityRef,
+          cc,
+          attachments,
           ...(viewer.isManager && assignees.length > 0 ? { assignees } : {}),
         }),
       });
@@ -820,6 +1054,22 @@ function NewRequestDialog({
             </div>
           )}
 
+          <div className="space-y-1.5">
+            <Label>CC (optional)</Label>
+            <EmailChips
+              value={cc}
+              onChange={setCc}
+              directory={directory}
+              listId="cc-list-new"
+              placeholder="Also notify by email…"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Attachments (optional)</Label>
+            <AttachmentEditor value={attachments} onChange={setAttachments} />
+          </div>
+
           {err && <p className="text-sm text-red-600">{err}</p>}
         </div>
 
@@ -861,6 +1111,7 @@ function TaskDetailDialog({
 
   const me = viewer.email.toLowerCase();
   const isRequester = task.requestedByEmail.toLowerCase() === me;
+  const isAssignee = task.assignees.some((a) => a.email.toLowerCase() === me);
   const pri = TASK_PRIORITY_CONFIG[task.priority];
 
   const patch = useCallback(
@@ -1067,6 +1318,42 @@ function TaskDetailDialog({
                   );
                 })}
               </div>
+            )}
+          </div>
+
+          {/* CC */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-500">CC</Label>
+            {viewer.isManager || isRequester ? (
+              <EmailChips
+                value={task.cc}
+                onChange={(next) => patch({ cc: next })}
+                directory={directory}
+                listId="cc-list-detail"
+                disabled={busy}
+                placeholder="Also notify by email…"
+              />
+            ) : task.cc.length > 0 ? (
+              <p className="text-sm text-slate-700">{task.cc.join(', ')}</p>
+            ) : (
+              <p className="text-sm text-slate-400 italic">None</p>
+            )}
+          </div>
+
+          {/* Attachments */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-500 flex items-center gap-1">
+              <Paperclip className="h-3.5 w-3.5" /> Attachments
+            </Label>
+            {task.attachments.length === 0 && !(viewer.isManager || isRequester || isAssignee) ? (
+              <p className="text-sm text-slate-400 italic">None</p>
+            ) : (
+              <AttachmentEditor
+                value={task.attachments}
+                onChange={(next) => patch({ attachments: next })}
+                disabled={busy}
+                readOnly={!(viewer.isManager || isRequester || isAssignee)}
+              />
             )}
           </div>
 

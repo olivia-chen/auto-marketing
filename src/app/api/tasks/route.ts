@@ -9,6 +9,8 @@ import {
   serviceAccountEmail,
   managerEmails,
   normalizeAssignees,
+  normalizeEmails,
+  normalizeAttachments,
   getSpreadsheetUrl,
   TasksNotConfiguredError,
   TasksStorageError,
@@ -84,6 +86,8 @@ export async function POST(req: NextRequest) {
   const manager = isManager(email);
   // Only a manager may pre-assign at creation time.
   const assignees = manager ? normalizeAssignees(body.assignees) : [];
+  const cc = normalizeEmails(body.cc);
+  const attachments = normalizeAttachments(body.attachments);
 
   try {
     const task = await createTask({
@@ -96,6 +100,8 @@ export async function POST(req: NextRequest) {
       requestedByEmail: email,
       requestedByName: session.user?.name || email,
       assignees,
+      cc,
+      attachments,
     });
 
     // Best-effort notifications (no-ops unless email is configured).

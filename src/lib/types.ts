@@ -317,6 +317,14 @@ export interface TaskAssignee {
   status: AssigneeStatus;
 }
 
+/** A file attached to a task (stored in Google Drive). */
+export interface TaskAttachment {
+  name: string;
+  url: string; // Drive webViewLink
+  thumbnailUrl?: string;
+  mimeType?: string;
+}
+
 /**
  * Roll a task's overall status up from its assignees' individual statuses.
  * Returns null when there are no assignees (caller keeps the manual status).
@@ -344,6 +352,8 @@ export interface Task {
   assignees: TaskAssignee[]; // empty when unassigned; may have several
   dueDate: string; // YYYY-MM-DD or ''
   activityRef: string; // optional free-text link/reference to a campaign item
+  cc: string[]; // extra emails CC'd on this task's notifications
+  attachments: TaskAttachment[]; // files/screenshots on the request
   comments: TaskComment[];
   createdAt: string; // ISO
   updatedAt: string; // ISO
@@ -357,6 +367,8 @@ export interface NewTaskInput {
   priority?: TaskPriority;
   dueDate?: string;
   activityRef?: string;
+  cc?: string[];
+  attachments?: TaskAttachment[];
   assignees?: TaskAssignee[]; // managers only; ignored otherwise
 }
 
