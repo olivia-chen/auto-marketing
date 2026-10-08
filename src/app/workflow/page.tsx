@@ -64,6 +64,17 @@ import { format, parseISO, isPast } from 'date-fns';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
+// Safe config lookups — never let an unknown/legacy value crash the page.
+function assigneeCfg(s: string) {
+  return ASSIGNEE_STATUS_CONFIG[s as AssigneeStatus] ?? ASSIGNEE_STATUS_CONFIG.todo;
+}
+function taskStatusCfg(s: string) {
+  return TASK_STATUS_CONFIG[s as TaskStatus] ?? TASK_STATUS_CONFIG.requested;
+}
+function priorityCfg(p: string) {
+  return TASK_PRIORITY_CONFIG[p as TaskPriority] ?? TASK_PRIORITY_CONFIG.medium;
+}
+
 function initials(name: string, email: string): string {
   const base = (name || email || '?').trim();
   const parts = base.split(/[\s@.]+/).filter(Boolean);
@@ -699,7 +710,7 @@ export default function WorkflowPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
             {TASK_STATUS_ORDER.map((status) => {
               const col = byStatus[status];
-              const cfg = TASK_STATUS_CONFIG[status];
+              const cfg = taskStatusCfg(status);
               return (
                 <div key={status} className="flex flex-col min-w-0">
                   <div className="flex items-center gap-2 mb-2 px-1">
@@ -805,7 +816,7 @@ function TaskCard({
   onDragStart?: () => void;
   onDragEnd?: () => void;
 }) {
-  const pri = TASK_PRIORITY_CONFIG[task.priority];
+  const pri = priorityCfg(task.priority);
   const overdue =
     task.dueDate &&
     task.status !== 'done' &&
@@ -854,13 +865,13 @@ function TaskCard({
                 {task.assignees.slice(0, 3).map((a) => (
                   <span
                     key={a.email}
-                    title={`${a.name || a.email} · ${ASSIGNEE_STATUS_CONFIG[a.status].label}`}
+                    title={`${a.name || a.email} · ${assigneeCfg(a.status).label}`}
                     className="relative h-5 w-5 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-[9px] font-bold ring-2 ring-white"
                   >
                     {initials(a.name, a.email)}
                     <span
                       className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-1 ring-white ${
-                        ASSIGNEE_STATUS_CONFIG[a.status].dot
+                        assigneeCfg(a.status).dot
                       }`}
                     />
                   </span>
@@ -1115,7 +1126,7 @@ function TaskDetailDialog({
   const me = viewer.email.toLowerCase();
   const isRequester = task.requestedByEmail.toLowerCase() === me;
   const isAssignee = task.assignees.some((a) => a.email.toLowerCase() === me);
-  const pri = TASK_PRIORITY_CONFIG[task.priority];
+  const pri = priorityCfg(task.priority);
 
   const patch = useCallback(
     async (body: Record<string, unknown>, clearComment = false) => {
@@ -1239,8 +1250,8 @@ function TaskDetailDialog({
             <div className="space-y-1.5">
               <Label className="text-xs text-slate-500">Overall status</Label>
               <div className="h-9 flex items-center gap-1.5">
-                <Badge className={`${TASK_STATUS_CONFIG[task.status].color} border-0`}>
-                  {TASK_STATUS_CONFIG[task.status].label}
+                <Badge className={`${taskStatusCfg(task.status).color} border-0`}>
+                  {taskStatusCfg(task.status).label}
                 </Badge>
                 {task.assignees.length > 0 && (
                   <span className="text-[10px] text-slate-400">from assignees</span>
@@ -1327,9 +1338,9 @@ function TaskDetailDialog({
                         </Select>
                       ) : (
                         <Badge
-                          className={`${ASSIGNEE_STATUS_CONFIG[a.status].color} border-0 flex-shrink-0`}
+                          className={`${assigneeCfg(a.status).color} border-0 flex-shrink-0`}
                         >
-                          {ASSIGNEE_STATUS_CONFIG[a.status].label}
+                          {assigneeCfg(a.status).label}
                         </Badge>
                       )}
                     </div>
