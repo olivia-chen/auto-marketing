@@ -112,9 +112,17 @@ export async function GET(req: NextRequest) {
         undefined;
 
       const imageUrl = resolveWixImageUrl(event.mainImage?.url);
+      // Wix location.address can be an object ({ formattedAddress, city, ... })
+      // — coerce to a plain string so it never renders as a React child.
+      const addr = event.location?.address as unknown;
+      const addrStr =
+        typeof addr === 'string'
+          ? addr
+          : (addr as { formattedAddress?: string })?.formattedAddress;
+      const locName = event.location?.name;
       const locationStr =
-        event.location?.name ||
-        event.location?.address ||
+        (typeof locName === 'string' ? locName : undefined) ||
+        (typeof addrStr === 'string' ? addrStr : undefined) ||
         undefined;
 
       return {

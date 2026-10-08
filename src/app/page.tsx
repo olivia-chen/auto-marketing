@@ -125,6 +125,18 @@ type DriveFileInfo = {
 };
 type DriveFolderInfo = { folderId: string; folderUrl: string; folderName: string; path: string };
 
+/** Coerce a possibly-object location (Wix address) to a display string. */
+function locationText(loc: unknown): string {
+  if (!loc) return '';
+  if (typeof loc === 'string') return loc;
+  if (typeof loc === 'object') {
+    const o = loc as Record<string, unknown>;
+    const v = o.formattedAddress || o.name || o.address || o.city || '';
+    return typeof v === 'string' ? v : '';
+  }
+  return String(loc);
+}
+
 function getSourceBadge(source: Activity['source']) {
   switch (source) {
     case 'wix-event':
@@ -2419,10 +2431,10 @@ export default function Home() {
                                   <Calendar className="h-3 w-3" />
                                   {formatActivityDate(activity.startDate)}
                                 </span>
-                                {activity.location && (
+                                {locationText(activity.location) && (
                                   <span className="text-xs text-slate-500 flex items-center gap-1">
                                     <MapPin className="h-3 w-3" />
-                                    {activity.location}
+                                    {locationText(activity.location)}
                                   </span>
                                 )}
                               </div>
