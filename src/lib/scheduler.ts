@@ -44,6 +44,7 @@ import {
   startOfWeek,
   endOfWeek,
   eachDayOfInterval,
+  isValid,
 } from 'date-fns';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -101,6 +102,9 @@ export function generateSchedule(
     if (activity.status === 'canceled') continue;
 
     const eventDate = startOfDay(parseISO(activity.startDate));
+    // Skip activities with a missing/malformed startDate — otherwise later
+    // date formatting throws and takes down the whole schedule.
+    if (!isValid(eventDate)) continue;
 
     for (const rule of rules) {
       let postDate: Date;

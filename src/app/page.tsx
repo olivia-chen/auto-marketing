@@ -521,28 +521,34 @@ export default function Home() {
     }
 
     // Generate schedule for the visible week
-    const raw = generateSchedule(activities, {
-      viewStart: weekRange.start,
-      viewEnd: weekRange.end,
-    });
+    try {
+      const raw = generateSchedule(activities, {
+        viewStart: weekRange.start,
+        viewEnd: weekRange.end,
+      });
 
-    const capped = applyPlatformCaps(raw, weekRange.start);
+      const capped = applyPlatformCaps(raw, weekRange.start);
 
-    // Filter out removed posts
-    const filtered = capped.filter((p) => !removedPostKeys.has(getPostKey(p)));
+      // Filter out removed posts
+      const filtered = capped.filter((p) => !removedPostKeys.has(getPostKey(p)));
 
-    // Merge with manually-added posts for this week
-    const weekManualPosts = manualPosts.filter((p) => {
-      return p.postDate >= weekStartKey && p.postDate <= weekEndKey;
-    });
+      // Merge with manually-added posts for this week
+      const weekManualPosts = manualPosts.filter((p) => {
+        return p.postDate >= weekStartKey && p.postDate <= weekEndKey;
+      });
 
-    const merged = [...filtered, ...weekManualPosts].sort((a, b) => {
-      const dateCompare = a.postDate.localeCompare(b.postDate);
-      if (dateCompare !== 0) return dateCompare;
-      return a.postTime.localeCompare(b.postTime);
-    });
+      const merged = [...filtered, ...weekManualPosts].sort((a, b) => {
+        const dateCompare = a.postDate.localeCompare(b.postDate);
+        if (dateCompare !== 0) return dateCompare;
+        return a.postTime.localeCompare(b.postTime);
+      });
 
-    setScheduledPosts(merged);
+      setScheduledPosts(merged);
+    } catch (e) {
+      console.error('Schedule generation failed:', e);
+      // Fall back to manual posts so the page still renders.
+      setScheduledPosts(manualPosts);
+    }
   }, [activities, weekStartKey, weekEndKey, removedPostKeys, manualPosts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Group posts into Mon-Fri grid
@@ -904,7 +910,7 @@ export default function Home() {
         postTime: post.postTime,
         angle: ANGLE_CONFIG[post.angle]?.label || post.angle,
         angleEmoji: ANGLE_CONFIG[post.angle]?.emoji || '',
-        platforms: post.platforms
+        platforms: (post.platforms || [])
           .map((pid) => {
             const p = PLATFORMS.find((pl) => pl.id === pid);
             return p ? `${p.emoji} ${p.title}` : pid;
@@ -919,11 +925,11 @@ export default function Home() {
         line: post.generatedContent?.line || '',
         wechat: post.generatedContent?.wechat || '',
         emailSubject:
-          typeof post.generatedContent?.email === 'object'
+          post.generatedContent?.email && typeof post.generatedContent.email === 'object'
             ? post.generatedContent.email.subject
             : '',
         emailBody:
-          typeof post.generatedContent?.email === 'object'
+          post.generatedContent?.email && typeof post.generatedContent.email === 'object'
             ? post.generatedContent.email.body
             : '',
       }));
@@ -1965,6 +1971,7 @@ export default function Home() {
                         day.posts.map((post) => {
                           const angleConfig = ANGLE_CONFIG[post.angle] ?? ANGLE_CONFIG.teaser;
                           const statusConfig = STATUS_CONFIG[post.status] ?? STATUS_CONFIG.draft;
+                          const platforms = post.platforms ?? [];
                           const isExpanded = expandedPostId === post.id;
                           const isGenerating = generatingPostId === post.id;
 
@@ -2049,7 +2056,7 @@ export default function Home() {
                                     {statusConfig.label}
                                   </span>
                                   <div className="flex gap-0.5">
-                                    {post.platforms.slice(0, 3).map((p) => {
+                                    {platforms.slice(0, 3).map((p) => {
                                       const plat = PLATFORMS.find((x) => x.id === p);
                                       return (
                                         <span
@@ -2061,9 +2068,9 @@ export default function Home() {
                                         </span>
                                       );
                                     })}
-                                    {post.platforms.length > 3 && (
+                                    {platforms.length > 3 && (
                                       <span className="text-[9px] text-slate-400">
-                                        +{post.platforms.length - 3}
+                                        +{platforms.length - 3}
                                       </span>
                                     )}
                                   </div>
@@ -2071,7 +2078,7 @@ export default function Home() {
 
                                 {/* Per-Platform Generate/Content */}
                                 <div className="mt-2 space-y-1">
-                                  {post.platforms.map((platformId) => {
+                                  {platforms.map((platformId) => {
                                     const platform = PLATFORMS.find((p) => p.id === platformId);
                                     if (!platform) return null;
 
