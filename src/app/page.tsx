@@ -133,6 +133,8 @@ function getSourceBadge(source: Activity['source']) {
       return { label: 'Wix Booking', color: 'bg-blue-100 text-blue-700' };
     case 'manual':
       return { label: 'Manual', color: 'bg-amber-100 text-amber-700' };
+    default:
+      return { label: 'Source', color: 'bg-slate-100 text-slate-600' };
   }
 }
 
@@ -1961,8 +1963,8 @@ export default function Home() {
                         </div>
                       ) : (
                         day.posts.map((post) => {
-                          const angleConfig = ANGLE_CONFIG[post.angle];
-                          const statusConfig = STATUS_CONFIG[post.status];
+                          const angleConfig = ANGLE_CONFIG[post.angle] ?? ANGLE_CONFIG.teaser;
+                          const statusConfig = STATUS_CONFIG[post.status] ?? STATUS_CONFIG.draft;
                           const isExpanded = expandedPostId === post.id;
                           const isGenerating = generatingPostId === post.id;
 
