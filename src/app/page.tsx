@@ -2,16 +2,13 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useSession, signOut } from 'next-auth/react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogContent,
@@ -22,80 +19,35 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import {
-  Image as ImageIcon,
   FileText,
-  Send,
   Loader2,
-  Copy,
-  Check,
   Plus,
   Calendar,
   MapPin,
   RefreshCw,
-  ChevronLeft,
-  ChevronRight,
-  Sparkles,
   Globe,
   ExternalLink,
   Trash2,
   AlertCircle,
-  Clock,
-  Zap,
-  Paperclip,
-  Link as LinkIcon,
-  X,
   Upload,
-  MessageSquare,
-  ChevronDown,
-  ChevronUp,
-  Table2,
-  Share2,
+  X,
   LogOut,
   Search,
   ClipboardList,
 } from 'lucide-react';
-import {
-  Activity,
-  CampaignType,
-  PlatformId,
-  PostAngle,
-  ScheduledPost,
-  PLATFORMS,
-  CAMPAIGN_TYPES,
-  ANGLE_CONFIG,
-  STATUS_CONFIG,
-  ApprovalStatus,
-  ContextAttachment,
-  ContextLink,
-} from '@/lib/types';
-import {
-  generateSchedule,
-  applyPlatformCaps,
-  groupByDay,
-  DaySchedule,
-} from '@/lib/scheduler';
+import { Activity, CampaignType, CAMPAIGN_TYPES } from '@/lib/types';
 import { v4 as uuidv4 } from 'uuid';
 import CampaignCalendar from '@/components/CampaignCalendar';
-import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, addDays, parseISO } from 'date-fns';
+import { format, parseISO, addDays } from 'date-fns';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
-function getWeekRange(date: Date) {
-  const start = startOfWeek(date, { weekStartsOn: 1 }); // Monday
-  const end = endOfWeek(date, { weekStartsOn: 1 });
-  return { start, end };
-}
-
-function formatDateRange(start: Date, end: Date) {
-  return `${format(start, 'MMM d')} — ${format(end, 'MMM d, yyyy')}`;
-}
-
-function formatActivityDate(dateStr: string | any) {
+function formatActivityDate(dateStr: string | unknown) {
   try {
-    // Handle Wix date objects that may slip through
-    let raw = dateStr;
+    let raw: unknown = dateStr;
     if (typeof raw === 'object' && raw !== null) {
-      raw = raw.utcDate || raw.localDate || '';
+      const o = raw as { utcDate?: string; localDate?: string };
+      raw = o.utcDate || o.localDate || '';
     }
     if (typeof raw !== 'string' || !raw) return 'Date TBD';
     return format(parseISO(raw), 'EEE, MMM d · h:mm a');
@@ -118,12 +70,6 @@ function resolveWixImageUrl(url?: string | null): string {
   return url;
 }
 
-type DriveFileInfo = {
-  id: string; name: string; mimeType: string;
-  thumbnailUrl: string | null; viewUrl: string | null;
-  downloadUrl: string | null; size: number; createdAt: string;
-  isImage: boolean; isVideo: boolean;
-};
 type DriveFolderInfo = { folderId: string; folderUrl: string; folderName: string; path: string };
 
 /** Coerce a possibly-object location (Wix address) to a display string. */
@@ -209,280 +155,44 @@ function compressAndConvert(file: File): Promise<{ base64: string; mimeType: str
 export default function Home() {
   const { data: session } = useSession();
 
-  // API key
-  // Server-side AI provider availability
-  const [serverAiStatus, setServerAiStatus] = useState<{ gemini: boolean; openai: boolean }>({ gemini: false, openai: false });
-
-  // Week navigation
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const weekRange = getWeekRange(currentDate);
-  const weekStartKey = format(weekRange.start, 'yyyy-MM-dd');
-  const weekEndKey = format(weekRange.end, 'yyyy-MM-dd');
-
   // Activities (from Wix + manual)
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
   const [wixConnected, setWixConnected] = useState<boolean | null>(null);
   const [exportingCalendar, setExportingCalendar] = useState(false);
 
-  // Scheduled posts (auto-generated)
-  const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
-
-  // Manual campaign dialog
+  // Manual event dialog
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [manualTitle, setManualTitle] = useState('');
   const [manualDate, setManualDate] = useState('');
   const [manualType, setManualType] = useState<CampaignType>('announcement');
   const [manualLink, setManualLink] = useState('');
   const [manualNotes, setManualNotes] = useState('');
-  const [manualImage, setManualImage] = useState<string | null>(null);
-  const manualFileRef = useRef<HTMLInputElement>(null);
 
-  // Generation state
-  const [generatingPostId, setGeneratingPostId] = useState<string | null>(null);
-  const [generatingPlatform, setGeneratingPlatform] = useState<string | null>(null); // tracks which platform is generating
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('schedule');
-  const [copiedTab, setCopiedTab] = useState<string | null>(null);
-
-  // Review modal state
-  const [reviewModal, setReviewModal] = useState<{
-    open: boolean;
-    postTitle: string;
-    platformId: string;
-    platformTitle: string;
-    platformEmoji: string;
-    content: string;
-  } | null>(null);
-
-  // Preset system prompts
-  const [promptPresets, setPromptPresets] = useState<{ name: string; prompt: string }[]>([]);
-  const [showPresetEditor, setShowPresetEditor] = useState(false);
-  const [newPresetName, setNewPresetName] = useState('');
-  const [newPresetPrompt, setNewPresetPrompt] = useState('');
-
-  // Expanded post detail
-  const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
-
-  // AI Settings
-  const [aiProvider, setAiProvider] = useState<'gemini' | 'openai'>('gemini');
-  const [brandContext, setBrandContext] = useState('');
-  const [showAiSettings, setShowAiSettings] = useState(false);
-
-  // Context panel for activities
-  const [contextPanelId, setContextPanelId] = useState<string | null>(null);
-  const contextFileRef = useRef<HTMLInputElement>(null);
-  const [contextLinkInput, setContextLinkInput] = useState('');
-  const [contextLinkLabel, setContextLinkLabel] = useState('');
-
-  // Google Sheets export
-  const [sheetsExporting, setSheetsExporting] = useState(false);
-  const [sheetsUrl, setSheetsUrl] = useState<string | null>(null);
-  const [sheetsSpreadsheetId, setSheetsSpreadsheetId] = useState('');
-  const [showSheetsConfig, setShowSheetsConfig] = useState(false);
-
-  // Add post to day dialog
-  const [addPostDay, setAddPostDay] = useState<string | null>(null); // YYYY-MM-DD
-  const [addPostActivityId, setAddPostActivityId] = useState<string>('');
-  const [addPostAngle, setAddPostAngle] = useState<PostAngle>('teaser');
-  const [addPostTime, setAddPostTime] = useState('10:00');
-  const [addPostPlatforms, setAddPostPlatforms] = useState<PlatformId[]>(['redbook', 'linkedin', 'facebook', 'line', 'wechat', 'email']);
-
-  // Manual post entries (not auto-generated, so they persist across re-renders)
-  const [manualPosts, setManualPosts] = useState<ScheduledPost[]>([]);
-
-  // Drag-and-drop state
-  const [draggedPost, setDraggedPost] = useState<ScheduledPost | null>(null);
-  const [dragOverDay, setDragOverDay] = useState<string | null>(null);
+  const [activitySearch, setActivitySearch] = useState('');
 
   // Google Drive media state
   const [driveFolders, setDriveFolders] = useState<Record<string, DriveFolderInfo>>({});
-  const [driveFiles, setDriveFiles] = useState<Record<string, DriveFileInfo[]>>({});
   const [loadingDriveFolder, setLoadingDriveFolder] = useState<string | null>(null);
-  const [loadingDriveFiles, setLoadingDriveFiles] = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadActivityRef = useRef<string | null>(null);
+  const uploadActivityDataRef = useRef<Activity | null>(null);
 
   // "Other" upload state
   const [uploadingOther, setUploadingOther] = useState(false);
   const [otherUploadProgress, setOtherUploadProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
   const otherFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Activity search
-  const [activitySearch, setActivitySearch] = useState('');
-  const filteredActivities = useMemo(() => {
-    if (!activitySearch.trim()) return activities;
-    const q = activitySearch.toLowerCase().trim();
-    return activities.filter(a =>
-      a.title.toLowerCase().includes(q) ||
-      (a.description && a.description.toLowerCase().includes(q))
-    );
-  }, [activities, activitySearch]);
-
-  // Wix blog publish state
-  const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
-  const [publishedPosts, setPublishedPosts] = useState<Record<string, { url: string }>>({});
-
-  // Load AI settings from localStorage + fetch server-side provider status
-  useEffect(() => {
-    const savedProvider = localStorage.getItem('ai_provider') as 'gemini' | 'openai' | null;
-    if (savedProvider) setAiProvider(savedProvider);
-    const savedBrand = localStorage.getItem('brand_context');
-    if (savedBrand) setBrandContext(savedBrand);
-
-    // Load saved prompt presets
-    const savedPresets = localStorage.getItem('prompt_presets');
-    if (savedPresets) {
-      try { setPromptPresets(JSON.parse(savedPresets)); } catch {}
-    } else {
-      // Default presets for TJCF
-      const defaults = [
-        { name: '🌿 TJCF Default', prompt: 'Write in a warm, community-focused tone. The Joy Culture Foundation promotes wellness, culture, and community through events and programs. Use emojis sparingly. Be inclusive and welcoming.' },
-        { name: '🎉 Event Promo', prompt: 'Write exciting, energetic promotional copy. Focus on what attendees will experience and gain. Use action-oriented language. Include clear calls-to-action with registration details.' },
-        { name: '📸 Event Recap', prompt: 'Write a grateful, celebratory recap. Highlight community impact, key moments, and participant experiences. Thank attendees and volunteers. Mention upcoming events.' },
-        { name: '📢 Announcement', prompt: 'Write a clear, professional announcement. Lead with the most important information. Keep it concise but complete. Use a friendly yet authoritative tone.' },
-      ];
-      setPromptPresets(defaults);
-      localStorage.setItem('prompt_presets', JSON.stringify(defaults));
-    }
-
-    // Fetch which AI providers have server-side keys configured
-    fetch('/api/ai/status')
-      .then((r) => r.json())
-      .then((status) => {
-        setServerAiStatus(status);
-        if (savedProvider === 'openai' && !status.openai && status.gemini) {
-          setAiProvider('gemini');
-        } else if (savedProvider === 'gemini' && !status.gemini && status.openai) {
-          setAiProvider('openai');
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const handleProviderChange = (val: 'gemini' | 'openai') => {
-    setAiProvider(val);
-    localStorage.setItem('ai_provider', val);
-  };
-
-  const handleBrandContextChange = (val: string) => {
-    setBrandContext(val);
-    localStorage.setItem('brand_context', val);
-  };
-
-  // Preset prompt management
-  const savePreset = () => {
-    if (!newPresetName.trim() || !newPresetPrompt.trim()) return;
-    const updated = [...promptPresets, { name: newPresetName.trim(), prompt: newPresetPrompt.trim() }];
-    setPromptPresets(updated);
-    localStorage.setItem('prompt_presets', JSON.stringify(updated));
-    setNewPresetName('');
-    setNewPresetPrompt('');
-    setShowPresetEditor(false);
-  };
-
-  const deletePreset = (index: number) => {
-    const updated = promptPresets.filter((_, i) => i !== index);
-    setPromptPresets(updated);
-    localStorage.setItem('prompt_presets', JSON.stringify(updated));
-  };
-
-  const applyPreset = (prompt: string) => {
-    handleBrandContextChange(prompt);
-  };
-
-  // ─── Per-Platform Generation ───────────────────────────────────
-  const handleGeneratePlatform = async (post: ScheduledPost, platformId: PlatformId) => {
-    const providerAvailable = aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini;
-    if (!providerAvailable) {
-      setError(`${aiProvider === 'openai' ? 'OpenAI' : 'Gemini'} is not configured on the server. Contact your administrator.`);
-      return;
-    }
-    if (!post.activity) {
-      setError('Activity data not found for this post.');
-      return;
-    }
-
-    setGeneratingPostId(post.id);
-    setGeneratingPlatform(platformId);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: aiProvider,
-          activities: [post.activity],
-          campaignType: post.activityType,
-          angle: post.angle,
-          link: post.activity.sourceUrl || '',
-          imageBase64: post.activity.mediaBase64,
-          notes: post.activity.notes || '',
-          platforms: [platformId],
-          contextMedia: post.activity.contextMedia || [],
-          contextLinks: post.activity.contextLinks || [],
-          contextNotes: post.activity.contextNotes || '',
-          brandContext: brandContext || undefined,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to generate');
-
-      // Merge into existing generatedContent (keep other platforms)
-      setScheduledPosts((prev) =>
-        prev.map((p) =>
-          p.id === post.id
-            ? {
-                ...p,
-                generatedContent: { ...(p.generatedContent || {}), ...data },
-                status: 'needs_review' as ApprovalStatus,
-              }
-            : p
-        )
-      );
-      setExpandedPostId(post.id);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setGeneratingPostId(null);
-      setGeneratingPlatform(null);
-    }
-  };
-
-  // Open review modal for a platform's content
-  const openReviewModal = (post: ScheduledPost, platformId: PlatformId) => {
-    const platform = PLATFORMS.find((p) => p.id === platformId);
-    if (!platform) return;
-    const content = post.generatedContent?.[platformId as keyof typeof post.generatedContent];
-    if (!content) return;
-
-    const isEmail = platformId === 'email';
-    const displayText = isEmail
-      ? typeof content === 'object'
-        ? `Subject: ${(content as any).subject}\n\n${(content as any).body}`
-        : String(content)
-      : String(content);
-
-    setReviewModal({
-      open: true,
-      postTitle: post.activity?.title || 'Post',
-      platformId,
-      platformTitle: platform.title,
-      platformEmoji: platform.emoji,
-      content: displayText,
-    });
-  };
-
-  // Fetch activities from Wix — pull from 2 weeks ago through far future
+  // ─── Fetch activities from Wix ────────────────────────────────
   const fetchActivities = useCallback(async () => {
     setIsLoadingActivities(true);
     setError(null);
 
-    // Fetch from 7 days ago (for recap/past events) through +90 days
+    // Fetch from 7 days ago (for recent events) through +90 days
     const fromDate = format(addDays(new Date(), -7), 'yyyy-MM-dd');
     const futureEnd = format(addDays(new Date(), 90), 'yyyy-MM-dd');
 
@@ -507,13 +217,13 @@ export default function Home() {
           (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
         );
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Fetch error:', err);
       setWixConnected(false);
     } finally {
       setIsLoadingActivities(false);
     }
-  }, []); // No dependency on week — always fetches future month
+  }, []);
 
   useEffect(() => {
     fetchActivities();
@@ -542,63 +252,19 @@ export default function Home() {
     fetchManualEntries();
   }, [fetchManualEntries]);
 
-  // ─── Removed posts tracking (persists across re-renders) ──────
-  const [removedPostKeys, setRemovedPostKeys] = useState<Set<string>>(new Set());
+  const filteredActivities = useMemo(() => {
+    if (!activitySearch.trim()) return activities;
+    const q = activitySearch.toLowerCase().trim();
+    return activities.filter(
+      (a) =>
+        a.title.toLowerCase().includes(q) ||
+        (a.description && a.description.toLowerCase().includes(q))
+    );
+  }, [activities, activitySearch]);
 
-  // Build a stable key for a post so we can track removals across regenerations
-  const getPostKey = (post: ScheduledPost) =>
-    `${post.activityId}__${post.postDate}__${post.angle}`;
-
-  // ─── Auto-Schedule Engine ─────────────────────────────────────
-  // Re-generate schedule whenever activities or week changes
-  useEffect(() => {
-    if (activities.length === 0) {
-      setScheduledPosts(manualPosts);
-      return;
-    }
-
-    // Generate schedule for the visible week
-    try {
-      const raw = generateSchedule(activities, {
-        viewStart: weekRange.start,
-        viewEnd: weekRange.end,
-      });
-
-      const capped = applyPlatformCaps(raw, weekRange.start);
-
-      // Filter out removed posts
-      const filtered = capped.filter((p) => !removedPostKeys.has(getPostKey(p)));
-
-      // Merge with manually-added posts for this week
-      const weekManualPosts = manualPosts.filter((p) => {
-        return p.postDate >= weekStartKey && p.postDate <= weekEndKey;
-      });
-
-      const merged = [...filtered, ...weekManualPosts].sort((a, b) => {
-        const dateCompare = a.postDate.localeCompare(b.postDate);
-        if (dateCompare !== 0) return dateCompare;
-        return a.postTime.localeCompare(b.postTime);
-      });
-
-      setScheduledPosts(merged);
-    } catch (e) {
-      console.error('Schedule generation failed:', e);
-      // Fall back to manual posts so the page still renders.
-      setScheduledPosts(manualPosts);
-    }
-  }, [activities, weekStartKey, weekEndKey, removedPostKeys, manualPosts]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Group posts into Mon-Fri grid
-  const daySchedules: DaySchedule[] = useMemo(() => {
-    return groupByDay(scheduledPosts, weekRange.start);
-  }, [scheduledPosts, weekStartKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Add manual campaign — persisted (shared) via the calendar-entries API so
-  // the whole team and the year export see the same data.
+  // ─── Add manual campaign — persisted (shared) ─────────────────
   const addManualCampaign = async () => {
     if (!manualTitle) return;
-    // manualDate may be a bare yyyy-MM-dd (day click) — keep it as-is; the
-    // store treats a date-only value as an all-day entry.
     const startDate = manualDate || new Date().toISOString();
     const payload = {
       title: manualTitle,
@@ -614,7 +280,6 @@ export default function Home() {
     setManualType('announcement');
     setManualLink('');
     setManualNotes('');
-    setManualImage(null);
     setShowAddDialog(false);
 
     const addLocal = (activity: Activity) => {
@@ -669,8 +334,6 @@ export default function Home() {
   const removeActivity = (id: string) => {
     const target = activities.find((a) => a.id === id);
     setActivities((prev) => prev.filter((a) => a.id !== id));
-    // Also remove any manual posts associated with this activity
-    setManualPosts((prev) => prev.filter((p) => p.activityId !== id));
     // Delete the shared/persisted copy of manual entries (best-effort).
     if (target?.source === 'manual') {
       fetch(`/api/calendar/entries?id=${encodeURIComponent(id)}`, {
@@ -685,7 +348,6 @@ export default function Home() {
     type ExportEntry = { date: string; title: string; time?: string; source?: string };
     const entries = activities
       .map((a): ExportEntry | null => {
-        // Safely resolve the activity's start date to a Date.
         let raw: unknown = a.startDate;
         if (raw && typeof raw === 'object') {
           const o = raw as { utcDate?: string; localDate?: string };
@@ -729,380 +391,7 @@ export default function Home() {
     }
   };
 
-  // ─── Remove / Restore Scheduled Post ─────────────────────────
-  const removeScheduledPost = (post: ScheduledPost) => {
-    const key = getPostKey(post);
-    // If it's a manual post, remove from manualPosts
-    if (manualPosts.some((p) => p.id === post.id)) {
-      setManualPosts((prev) => prev.filter((p) => p.id !== post.id));
-    } else {
-      // Auto-generated post: add to removed set
-      setRemovedPostKeys((prev) => new Set(prev).add(key));
-    }
-  };
-
-  // ─── Add Post to Specific Day ────────────────────────────────
-  const handleAddPostToDay = () => {
-    if (!addPostDay || !addPostActivityId) return;
-    const activity = activities.find((a) => a.id === addPostActivityId);
-    if (!activity) return;
-
-    const newPost: ScheduledPost = {
-      id: uuidv4(),
-      activityId: activity.id,
-      activityTitle: activity.title,
-      activityType: activity.type,
-      postDate: addPostDay,
-      postTime: addPostTime,
-      angle: addPostAngle,
-      platforms: addPostPlatforms,
-      status: 'draft',
-      activity,
-    };
-
-    setManualPosts((prev) => [...prev, newPost]);
-    setAddPostDay(null);
-    setAddPostActivityId('');
-    setAddPostAngle('teaser');
-    setAddPostTime('10:00');
-    setAddPostPlatforms(['redbook', 'linkedin', 'facebook', 'line', 'wechat', 'email']);
-  };
-
-  // ─── Drag & Drop: Move Post to Different Day ──────────────────
-  const movePostToDate = (post: ScheduledPost, newDate: string) => {
-    if (post.postDate === newDate) return; // dropped on same day
-
-    const isManual = manualPosts.some((p) => p.id === post.id);
-
-    if (isManual) {
-      // Just update the date in-place
-      setManualPosts((prev) =>
-        prev.map((p) => (p.id === post.id ? { ...p, postDate: newDate } : p))
-      );
-    } else {
-      // Auto-generated post: remove original, add as manual with new date
-      const key = getPostKey(post);
-      setRemovedPostKeys((prev) => new Set(prev).add(key));
-      const movedPost: ScheduledPost = {
-        ...post,
-        id: uuidv4(), // new id so it's independent
-        postDate: newDate,
-      };
-      setManualPosts((prev) => [...prev, movedPost]);
-    }
-  };
-
-  // Handle image upload
-  const handleImageUpload = (
-    e: React.ChangeEvent<HTMLInputElement>,
-    setFn: (val: string | null) => void
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => setFn(event.target?.result as string);
-    reader.readAsDataURL(file);
-  };
-
-  // ─── Activity Context Helpers ─────────────────────────────────
-
-  const updateActivity = (id: string, updates: Partial<Activity>) => {
-    setActivities(prev =>
-      prev.map(a => (a.id === id ? { ...a, ...updates } : a))
-    );
-  };
-
-  const addContextMedia = (activityId: string, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      const attachment: ContextAttachment = {
-        id: uuidv4(),
-        type: file.type.startsWith('image/') ? 'image' : file.type === 'application/pdf' ? 'pdf' : 'file',
-        name: file.name,
-        mimeType: file.type,
-        dataUrl,
-        addedAt: new Date().toISOString(),
-      };
-      setActivities(prev =>
-        prev.map(a =>
-          a.id === activityId
-            ? { ...a, contextMedia: [...(a.contextMedia || []), attachment] }
-            : a
-        )
-      );
-    };
-    reader.readAsDataURL(file);
-    // Reset input so the same file can be re-selected
-    e.target.value = '';
-  };
-
-  const addContextLink = (activityId: string) => {
-    if (!contextLinkInput.trim()) return;
-    const link: ContextLink = {
-      id: uuidv4(),
-      url: contextLinkInput.trim(),
-      label: contextLinkLabel.trim() || undefined,
-      addedAt: new Date().toISOString(),
-    };
-    setActivities(prev =>
-      prev.map(a =>
-        a.id === activityId
-          ? { ...a, contextLinks: [...(a.contextLinks || []), link] }
-          : a
-      )
-    );
-    setContextLinkInput('');
-    setContextLinkLabel('');
-  };
-
-  const removeContextAttachment = (activityId: string, attachmentId: string) => {
-    setActivities(prev =>
-      prev.map(a =>
-        a.id === activityId
-          ? { ...a, contextMedia: (a.contextMedia || []).filter(m => m.id !== attachmentId) }
-          : a
-      )
-    );
-  };
-
-  const removeContextLink = (activityId: string, linkId: string) => {
-    setActivities(prev =>
-      prev.map(a =>
-        a.id === activityId
-          ? { ...a, contextLinks: (a.contextLinks || []).filter(l => l.id !== linkId) }
-          : a
-      )
-    );
-  };
-
-  const getContextCount = (activity: Activity) => {
-    return (
-      (activity.contextMedia?.length || 0) +
-      (activity.contextLinks?.length || 0) +
-      (activity.contextNotes ? 1 : 0)
-    );
-  };
-
-  // ─── Per-Post Generation ─────────────────────────────────────
-  const handleGeneratePost = async (post: ScheduledPost) => {
-    const providerAvailable = aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini;
-    if (!providerAvailable) {
-      setError(`${aiProvider === 'openai' ? 'OpenAI' : 'Gemini'} is not configured on the server. Contact your administrator.`);
-      return;
-    }
-
-    if (!post.activity) {
-      setError('Activity data not found for this post.');
-      return;
-    }
-
-    setGeneratingPostId(post.id);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: aiProvider,
-          activities: [post.activity],
-          campaignType: post.activityType,
-          angle: post.angle,
-          link: post.activity.sourceUrl || '',
-          imageBase64: post.activity.mediaBase64,
-          notes: post.activity.notes || '',
-          platforms: post.platforms,
-          contextMedia: post.activity.contextMedia || [],
-          contextLinks: post.activity.contextLinks || [],
-          contextNotes: post.activity.contextNotes || '',
-          brandContext: brandContext || undefined,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to generate');
-
-      // Update the scheduled post with generated content
-      setScheduledPosts((prev) =>
-        prev.map((p) =>
-          p.id === post.id
-            ? { ...p, generatedContent: data, status: 'needs_review' as ApprovalStatus }
-            : p
-        )
-      );
-
-      // Expand the post to show content
-      setExpandedPostId(post.id);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setGeneratingPostId(null);
-    }
-  };
-
-  // Update post status
-  const updatePostStatus = (postId: string, status: ApprovalStatus) => {
-    setScheduledPosts((prev) =>
-      prev.map((p) => (p.id === postId ? { ...p, status } : p))
-    );
-  };
-
-  const copyToClipboard = (key: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedTab(key);
-    setTimeout(() => setCopiedTab(null), 2000);
-  };
-
-  const totalPosts = scheduledPosts.length;
-  const generatedCount = scheduledPosts.filter((p) => p.generatedContent).length;
-  const ungeneratedPosts = scheduledPosts.filter((p) => !p.generatedContent);
-
-  // ─── Batch Generate All ──────────────────────────────────────
-  const [batchGenerating, setBatchGenerating] = useState(false);
-  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
-
-  const handleBatchGenerate = async () => {
-    const providerAvailable = aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini;
-    if (!providerAvailable) {
-      setError(`${aiProvider === 'openai' ? 'OpenAI' : 'Gemini'} is not configured on the server. Contact your administrator.`);
-      return;
-    }
-    if (ungeneratedPosts.length === 0) return;
-
-    setBatchGenerating(true);
-    setBatchProgress({ current: 0, total: ungeneratedPosts.length });
-    setError(null);
-
-    for (let i = 0; i < ungeneratedPosts.length; i++) {
-      const post = ungeneratedPosts[i];
-      setBatchProgress({ current: i + 1, total: ungeneratedPosts.length });
-
-      try {
-        if (!post.activity) continue;
-
-        setGeneratingPostId(post.id);
-
-        const response = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            provider: aiProvider,
-            activities: [post.activity],
-            campaignType: post.activityType,
-            angle: post.angle,
-            link: post.activity.sourceUrl || '',
-            imageBase64: post.activity.mediaBase64,
-            notes: post.activity.notes || '',
-            platforms: post.platforms,
-            contextMedia: post.activity.contextMedia || [],
-            contextLinks: post.activity.contextLinks || [],
-            contextNotes: post.activity.contextNotes || '',
-            brandContext: brandContext || undefined,
-          }),
-        });
-
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Failed to generate');
-
-        setScheduledPosts((prev) =>
-          prev.map((p) =>
-            p.id === post.id
-              ? { ...p, generatedContent: data, status: 'needs_review' as ApprovalStatus }
-              : p
-          )
-        );
-      } catch (err: any) {
-        setError(`Failed on post ${i + 1}/${ungeneratedPosts.length}: ${err.message}`);
-        break;
-      }
-    }
-
-    setGeneratingPostId(null);
-    setBatchGenerating(false);
-  };
-
-  // ─── Google Sheets Export ─────────────────────────────────────────
-  // Load spreadsheet ID from localStorage
-  useEffect(() => {
-    const savedId = localStorage.getItem('sheets_spreadsheet_id');
-    if (savedId) setSheetsSpreadsheetId(savedId);
-  }, []);
-
-  const handleExportToSheets = async () => {
-    if (scheduledPosts.length === 0) {
-      setError('No posts to export. Add activities and generate a schedule first.');
-      return;
-    }
-
-    setSheetsExporting(true);
-    setError(null);
-    setSheetsUrl(null);
-
-    try {
-      const exportPosts = scheduledPosts.map((post) => ({
-        activityTitle: post.activityTitle,
-        postDate: post.postDate,
-        postTime: post.postTime,
-        angle: ANGLE_CONFIG[post.angle]?.label || post.angle,
-        angleEmoji: ANGLE_CONFIG[post.angle]?.emoji || '',
-        platforms: (post.platforms || [])
-          .map((pid) => {
-            const p = PLATFORMS.find((pl) => pl.id === pid);
-            return p ? `${p.emoji} ${p.title}` : pid;
-          })
-          .join(', '),
-        status: STATUS_CONFIG[post.status]?.label || post.status,
-        sourceUrl: post.activity?.sourceUrl || '',
-        // Generated content
-        redbook: post.generatedContent?.redbook || '',
-        linkedin: post.generatedContent?.linkedin || '',
-        facebook: post.generatedContent?.facebook || '',
-        line: post.generatedContent?.line || '',
-        wechat: post.generatedContent?.wechat || '',
-        emailSubject:
-          post.generatedContent?.email && typeof post.generatedContent.email === 'object'
-            ? post.generatedContent.email.subject
-            : '',
-        emailBody:
-          post.generatedContent?.email && typeof post.generatedContent.email === 'object'
-            ? post.generatedContent.email.body
-            : '',
-      }));
-
-      const weekLabel = formatDateRange(weekRange.start, weekRange.end);
-
-      const response = await fetch('/api/sheets/export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          posts: exportPosts,
-          spreadsheetId: sheetsSpreadsheetId || undefined,
-          sheetTitle: weekLabel,
-          weekLabel,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to export');
-
-      setSheetsUrl(data.url);
-
-      // Save the spreadsheet ID for future exports
-      if (data.spreadsheetId) {
-        setSheetsSpreadsheetId(data.spreadsheetId);
-        localStorage.setItem('sheets_spreadsheet_id', data.spreadsheetId);
-      }
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSheetsExporting(false);
-    }
-  };
-
-  // ── Google Drive: open/create activity folder ──
+  // ─── Google Drive: open / create an event folder ──────────────
   const openDriveFolder = async (activity: Activity) => {
     // Open window synchronously (before await) to avoid iOS Safari popup blocker
     const newWindow = window.open('about:blank', '_blank');
@@ -1115,19 +404,17 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to create folder');
-      setDriveFolders(prev => ({ ...prev, [activity.id]: data }));
+      setDriveFolders((prev) => ({ ...prev, [activity.id]: data }));
 
       // Force Google Drive to open under the TJCF account
       const userEmail = session?.user?.email || '';
       const tjcfEmail = userEmail.endsWith('@thejoyculturefoundation.org') ? userEmail : '';
 
-      // Detect mobile device
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
       const folderId = data.folderId;
 
       let driveUrl: string;
       if (isMobile && folderId) {
-        // Use Google Drive app deep link on mobile for native upload experience
         driveUrl = `https://drive.google.com/drive/folders/${folderId}`;
       } else {
         driveUrl = tjcfEmail
@@ -1140,8 +427,8 @@ export default function Home() {
       } else {
         window.location.href = driveUrl;
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err) {
+      setError((err as Error).message);
       if (newWindow) newWindow.close();
     } finally {
       setLoadingDriveFolder(null);
@@ -1149,9 +436,6 @@ export default function Home() {
   };
 
   // ── Google Drive: trigger file picker for in-app upload ──
-  // Store the activity info for when files are selected
-  const uploadActivityDataRef = useRef<Activity | null>(null);
-
   const triggerUpload = (activityId: string, activity: Activity) => {
     // Open file picker SYNCHRONOUSLY to preserve user gesture (avoids iOS blocker)
     uploadActivityRef.current = activityId;
@@ -1182,9 +466,9 @@ export default function Home() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to create folder');
         folder = data;
-        setDriveFolders(prev => ({ ...prev, [activityId]: data }));
-      } catch (err: any) {
-        setError(err.message);
+        setDriveFolders((prev) => ({ ...prev, [activityId]: data }));
+      } catch (err) {
+        setError((err as Error).message);
         setUploadingMedia(null);
         setUploadProgress({ current: 0, total: 0 });
         return;
@@ -1218,11 +502,10 @@ export default function Home() {
         }
       }
 
-      // Success notification
       setError(null);
       alert(`✅ ${files.length} file${files.length > 1 ? 's' : ''} uploaded successfully!`);
-    } catch (err: any) {
-      setError(`Upload failed: ${err.message}`);
+    } catch (err) {
+      setError(`Upload failed: ${(err as Error).message}`);
     } finally {
       setUploadingMedia(null);
       setUploadProgress({ current: 0, total: 0 });
@@ -1247,7 +530,6 @@ export default function Home() {
     setOtherUploadProgress({ current: 0, total: files.length });
 
     try {
-      // Get/create the 0-Other folder
       const folderRes = await fetch('/api/drive/other-folder', { method: 'POST' });
       const folderData = await folderRes.json();
       if (!folderRes.ok) throw new Error(folderData.error || 'Failed to get 0-Other folder');
@@ -1275,88 +557,17 @@ export default function Home() {
       }
 
       alert(`✅ ${files.length} file${files.length > 1 ? 's' : ''} uploaded to 0-Other!`);
-    } catch (err: any) {
-      setError(`Upload failed: ${err.message}`);
+    } catch (err) {
+      setError(`Upload failed: ${(err as Error).message}`);
     } finally {
       setUploadingOther(false);
       setOtherUploadProgress({ current: 0, total: 0 });
     }
   };
 
-  // ── Google Drive: load media files from folder ──
-  const loadDriveMedia = async (activity: Activity) => {
-    const folder = driveFolders[activity.id];
-    if (!folder) {
-      // First create/find the folder
-      setLoadingDriveFolder(activity.id);
-      try {
-        const res = await fetch('/api/drive/folders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ activityTitle: activity.title, startDate: activity.startDate }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to find folder');
-        setDriveFolders(prev => ({ ...prev, [activity.id]: data }));
-        setLoadingDriveFolder(null);
-        // Now load files
-        setLoadingDriveFiles(activity.id);
-        const filesRes = await fetch(`/api/drive/files?folderId=${data.folderId}`);
-        const filesData = await filesRes.json();
-        if (filesRes.ok) setDriveFiles(prev => ({ ...prev, [activity.id]: filesData.files || [] }));
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setLoadingDriveFolder(null);
-        setLoadingDriveFiles(null);
-      }
-      return;
-    }
-    setLoadingDriveFiles(activity.id);
-    try {
-      const res = await fetch(`/api/drive/files?folderId=${folder.folderId}`);
-      const data = await res.json();
-      if (res.ok) setDriveFiles(prev => ({ ...prev, [activity.id]: data.files || [] }));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoadingDriveFiles(null);
-    }
-  };
-
-  // ── Wix Blog: publish post ──
-  const handlePublishToWix = async (post: ScheduledPost) => {
-    if (!post.generatedContent) return;
-    setPublishingPostId(post.id);
-    try {
-      // Use the first available content (facebook, linkedin, etc.)
-      const content = post.generatedContent.facebook ||
-        post.generatedContent.linkedin ||
-        post.generatedContent.redbook ||
-        Object.values(post.generatedContent).find(v => typeof v === 'string' && v.length > 0) || '';
-      const res = await fetch('/api/wix/blog/publish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: post.activityTitle,
-          bodyText: String(content),
-          coverImageUrl: post.activity?.imageUrl || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Publish failed');
-      setPublishedPosts(prev => ({ ...prev, [post.id]: { url: data.postUrl || '' } }));
-      updatePostStatus(post.id, 'posted');
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setPublishingPostId(null);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-teal-50/30 to-emerald-50/20 font-sans">
-      {/* Hidden file input for photo upload */}
+      {/* Hidden file inputs for photo upload */}
       <input
         ref={fileInputRef}
         type="file"
@@ -1373,6 +584,7 @@ export default function Home() {
         className="hidden"
         onChange={handleOtherFileUpload}
       />
+
       {/* Top Header Bar */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-teal-200/60 shadow-sm">
         <div className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-8 py-2 sm:py-3 flex flex-row justify-between items-center gap-2 sm:gap-3">
@@ -1401,16 +613,6 @@ export default function Home() {
                 <AlertCircle className="h-3 w-3" /> Wix Not Configured
               </Badge>
             )}
-            {/* AI provider status badge */}
-            <Badge className={`border-0 text-xs gap-1 hidden sm:flex ${
-              (aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini)
-                ? 'bg-teal-100 text-teal-700'
-                : 'bg-red-100 text-red-700'
-            }`}>
-              <Sparkles className="h-3 w-3" />
-              {aiProvider === 'openai' ? 'OpenAI' : 'Gemini'}
-              {(aiProvider === 'openai' ? serverAiStatus.openai : serverAiStatus.gemini) ? '' : ' — Not Configured'}
-            </Badge>
             <a href="/workflow">
               <Button
                 variant="outline"
@@ -1422,17 +624,6 @@ export default function Home() {
                 <span className="sm:hidden">Tasks</span>
               </Button>
             </a>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 sm:h-9 gap-1 sm:gap-1.5 text-[10px] sm:text-xs border-teal-200 text-teal-700 hover:bg-teal-50 px-2 sm:px-3"
-              onClick={() => setShowAiSettings(!showAiSettings)}
-            >
-              <Sparkles className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-              <span className="hidden sm:inline">AI Settings</span>
-              <span className="sm:hidden">AI</span>
-              {showAiSettings ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </Button>
 
             {/* User Avatar & Sign Out */}
             {session?.user && (
@@ -1467,281 +658,116 @@ export default function Home() {
             )}
           </div>
         </div>
-
-        {/* AI Settings Panel (collapsible) */}
-        {showAiSettings && (
-          <div className="border-t border-teal-100 bg-gradient-to-r from-teal-50/50 to-emerald-50/50">
-            <div className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-8 py-3 sm:py-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
-                {/* Provider Selection */}
-                <div className="space-y-2">
-                  <Label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">AI Provider</Label>
-                  <div className="flex gap-2">
-                    <button
-                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                        aiProvider === 'gemini'
-                          ? 'bg-teal-600 text-white shadow-md shadow-teal-200'
-                          : 'bg-white border border-slate-200 text-slate-600 hover:border-teal-300'
-                      }`}
-                      onClick={() => handleProviderChange('gemini')}
-                    >
-                      ✨ Gemini
-                    </button>
-                    <button
-                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                        aiProvider === 'openai'
-                          ? 'bg-teal-600 text-white shadow-md shadow-teal-200'
-                          : 'bg-white border border-slate-200 text-slate-600 hover:border-teal-300'
-                      }`}
-                      onClick={() => handleProviderChange('openai')}
-                    >
-                      🤖 OpenAI
-                    </button>
-                  </div>
-                </div>
-
-                {/* Provider Status */}
-                <div className="space-y-2">
-                  <Label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</Label>
-                  <div className="bg-white rounded-lg border border-slate-200 p-3 space-y-1.5">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className={`h-2 w-2 rounded-full ${serverAiStatus.gemini ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                      <span className={serverAiStatus.gemini ? 'text-slate-700' : 'text-slate-400'}>Gemini {serverAiStatus.gemini ? '— Ready' : '— Not configured'}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className={`h-2 w-2 rounded-full ${serverAiStatus.openai ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                      <span className={serverAiStatus.openai ? 'text-slate-700' : 'text-slate-400'}>OpenAI {serverAiStatus.openai ? '— Ready' : '— Not configured'}</span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-1">API keys are managed by the administrator</p>
-                  </div>
-                </div>
-
-                {/* Brand Context */}
-                <div className="space-y-2">
-                  <Label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Brand Voice & Style</Label>
-                  <Textarea
-                    placeholder="e.g. Warm, community-focused, bilingual. Use emojis sparingly..."
-                    value={brandContext}
-                    onChange={(e) => handleBrandContextChange(e.target.value)}
-                    className="h-[72px] text-sm bg-white border-slate-200 resize-none"
-                  />
-                </div>
-              </div>
-
-              {/* Prompt Presets Row */}
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Prompt Presets</Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 text-[10px] gap-1 text-teal-600"
-                    onClick={() => setShowPresetEditor(!showPresetEditor)}
-                  >
-                    <Plus className="h-3 w-3" />
-                    {showPresetEditor ? 'Cancel' : 'New Preset'}
-                  </Button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {promptPresets.map((preset, idx) => (
-                    <div key={idx} className="group relative">
-                      <button
-                        className={`text-xs px-3 py-1.5 rounded-lg transition-all border ${
-                          brandContext === preset.prompt
-                            ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
-                            : 'bg-white text-slate-600 border-slate-200 hover:border-teal-300 hover:bg-teal-50'
-                        }`}
-                        onClick={() => applyPreset(preset.prompt)}
-                        title={preset.prompt}
-                      >
-                        {preset.name}
-                      </button>
-                      <button
-                        className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-red-100 text-red-500 text-[8px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-200"
-                        onClick={(e) => { e.stopPropagation(); deletePreset(idx); }}
-                        title="Delete preset"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                {/* New Preset Editor */}
-                {showPresetEditor && (
-                  <div className="bg-white rounded-lg border border-teal-200 p-3 space-y-2 mt-2">
-                    <Input
-                      placeholder="Preset name (e.g. 🎯 Sales Push)"
-                      value={newPresetName}
-                      onChange={(e) => setNewPresetName(e.target.value)}
-                      className="h-8 text-sm"
-                    />
-                    <Textarea
-                      placeholder="System prompt instructions..."
-                      value={newPresetPrompt}
-                      onChange={(e) => setNewPresetPrompt(e.target.value)}
-                      className="h-16 text-sm resize-none"
-                    />
-                    <Button
-                      size="sm"
-                      className="h-7 text-xs bg-teal-600 hover:bg-teal-700"
-                      onClick={savePreset}
-                      disabled={!newPresetName.trim() || !newPresetPrompt.trim()}
-                    >
-                      Save Preset
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </header>
 
       {/* Main Content */}
       <main className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
-        {/* Tab Navigation */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="sticky top-[49px] sm:top-[57px] z-40 bg-slate-50/80 backdrop-blur-lg -mx-3 sm:-mx-4 md:-mx-8 px-3 sm:px-4 md:px-8 py-2 sm:py-3 border-b border-slate-200/40">
-           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
-            <TabsList className="bg-white shadow-sm border border-slate-200/60 w-full sm:w-auto">
-              <TabsTrigger
-                value="schedule"
-                className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-1.5 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-initial"
-              >
-                <Calendar className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                Calendar
-              </TabsTrigger>
-              <TabsTrigger
-                value="activities"
-                className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-1.5 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-initial"
-              >
-                <FileText className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                Activities
-                <span className="text-xs opacity-60">({activities.length})</span>
-              </TabsTrigger>
-            </TabsList>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
+              <TabsList className="bg-white shadow-sm border border-slate-200/60 w-full sm:w-auto">
+                <TabsTrigger
+                  value="schedule"
+                  className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-1.5 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-initial"
+                >
+                  <Calendar className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  Calendar
+                </TabsTrigger>
+                <TabsTrigger
+                  value="activities"
+                  className="data-[state=active]:bg-teal-600 data-[state=active]:text-white gap-1.5 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-initial"
+                >
+                  <FileText className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  Activities
+                  <span className="text-xs opacity-60">({activities.length})</span>
+                </TabsTrigger>
+              </TabsList>
 
-            <div className="flex items-center gap-2">
-              <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-                <DialogTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1 border-dashed border-teal-300 text-teal-600 hover:bg-teal-50"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Add Event
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[500px]">
-                  <DialogHeader>
-                    <DialogTitle>Add Manual Event</DialogTitle>
-                    <DialogDescription>
-                      Add an event not from Wix (partnerships, external events, etc.)
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label>Title *</Label>
-                      <Input
-                        placeholder="Event title"
-                        value={manualTitle}
-                        onChange={(e) => setManualTitle(e.target.value)}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-center gap-2">
+                <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1 border-dashed border-teal-300 text-teal-600 hover:bg-teal-50"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add Event
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-[500px]">
+                    <DialogHeader>
+                      <DialogTitle>Add Manual Event</DialogTitle>
+                      <DialogDescription>
+                        Add an event Wix doesn&apos;t track (classes, storytime, school
+                        notes, partnerships). It&apos;s saved and shared with the team.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
                       <div className="space-y-2">
-                        <Label>Event Date *</Label>
+                        <Label>Title *</Label>
                         <Input
-                          type="datetime-local"
-                          value={manualDate}
-                          onChange={(e) => setManualDate(e.target.value)}
+                          placeholder="Event title"
+                          value={manualTitle}
+                          onChange={(e) => setManualTitle(e.target.value)}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Event Date *</Label>
+                          <Input
+                            type="datetime-local"
+                            value={manualDate}
+                            onChange={(e) => setManualDate(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Type</Label>
+                          <Select
+                            value={manualType}
+                            onValueChange={(v) => setManualType(v as CampaignType)}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {CAMPAIGN_TYPES.map((ct) => (
+                                <SelectItem key={ct.value} value={ct.value}>
+                                  {ct.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Source Link</Label>
+                        <Input
+                          placeholder="https://..."
+                          value={manualLink}
+                          onChange={(e) => setManualLink(e.target.value)}
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>Type</Label>
-                        <Select
-                          value={manualType}
-                          onValueChange={(v) => setManualType(v as CampaignType)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {CAMPAIGN_TYPES.map((ct) => (
-                              <SelectItem key={ct.value} value={ct.value}>
-                                {ct.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Label>Notes</Label>
+                        <Textarea
+                          placeholder="Additional context..."
+                          value={manualNotes}
+                          onChange={(e) => setManualNotes(e.target.value)}
+                          className="h-20 resize-none"
+                        />
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Source Link</Label>
-                      <Input
-                        placeholder="https://..."
-                        value={manualLink}
-                        onChange={(e) => setManualLink(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Upload Image / Flyer</Label>
-                      {!manualImage ? (
-                        <div
-                          className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:bg-slate-50 transition-colors"
-                          onClick={() => manualFileRef.current?.click()}
-                        >
-                          <ImageIcon className="h-6 w-6 mx-auto mb-1 text-slate-400" />
-                          <span className="text-sm text-slate-500">Click to upload</span>
-                          <input
-                            type="file"
-                            ref={manualFileRef}
-                            onChange={(e) => handleImageUpload(e, setManualImage)}
-                            accept="image/*"
-                            className="hidden"
-                          />
-                        </div>
-                      ) : (
-                        <div className="relative rounded-lg overflow-hidden border group">
-                          <img
-                            src={manualImage}
-                            alt="Preview"
-                            className="w-full h-32 object-cover"
-                          />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => setManualImage(null)}
-                            >
-                              Remove
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Notes</Label>
-                      <Textarea
-                        placeholder="Additional context..."
-                        value={manualNotes}
-                        onChange={(e) => setManualNotes(e.target.value)}
-                        className="h-20 resize-none"
-                      />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button onClick={addManualCampaign} disabled={!manualTitle}>
-                      <Plus className="h-4 w-4 mr-1" />
-                      Add Event
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                    <DialogFooter>
+                      <Button onClick={addManualCampaign} disabled={!manualTitle}>
+                        <Plus className="h-4 w-4 mr-1" />
+                        Add Event
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </div>
-          </div>
           </div>
 
           {/* Error Banner */}
@@ -1755,7 +781,7 @@ export default function Home() {
             </div>
           )}
 
-          {/* ─── SCHEDULE TAB (Mon-Fri Grid) ──────────────────── */}
+          {/* ─── CALENDAR TAB ──────────────────────────────────── */}
           <TabsContent value="schedule" className="mt-6 space-y-4">
             <CampaignCalendar
               activities={activities}
@@ -1768,13 +794,12 @@ export default function Home() {
             />
           </TabsContent>
 
-
           {/* ─── ACTIVITIES TAB ──────────────────────────────────── */}
           <TabsContent value="activities" className="mt-6 space-y-4">
             <div className="bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-slate-200/60 space-y-2">
               <div className="flex items-center justify-between">
                 <h2 className="text-base sm:text-lg font-semibold text-slate-800">
-                  Source Events & Bookings
+                  Source Events &amp; Bookings
                 </h2>
                 <div className="flex items-center gap-2">
                   <Button
@@ -1836,23 +861,12 @@ export default function Home() {
               <div className="grid gap-3">
                 {filteredActivities.map((activity) => {
                   const badge = getSourceBadge(activity.source);
-                  const postCount = scheduledPosts.filter(
-                    (p) => p.activityId === activity.id
-                  ).length;
-                  const ctxCount = getContextCount(activity);
-                  const isContextOpen = contextPanelId === activity.id;
-
                   return (
                     <div
                       key={activity.id}
                       id={`activity-${activity.id}`}
-                      className={`bg-white rounded-xl border shadow-sm transition-all ${
-                        isContextOpen
-                          ? 'border-teal-300 ring-1 ring-teal-100 shadow-md'
-                          : 'border-slate-200/60 hover:shadow-md'
-                      }`}
+                      className="bg-white rounded-xl border border-slate-200/60 shadow-sm hover:shadow-md transition-all"
                     >
-                      {/* Activity Header */}
                       <div className="p-3 sm:p-4 flex items-start gap-3 sm:gap-4">
                         {(activity.imageUrl || activity.mediaBase64) && (
                           <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-lg overflow-hidden flex-shrink-0 border border-slate-100">
@@ -1898,16 +912,13 @@ export default function Home() {
                               <Badge className={`${badge.color} border-0 text-[10px] px-2 py-0.5`}>
                                 {badge.label}
                               </Badge>
-                              <Badge className="bg-teal-50 text-teal-600 border-0 text-[10px] px-2 py-0.5">
-                                {postCount} posts
-                              </Badge>
                               <button
-                                  onClick={() => removeActivity(activity.id)}
-                                  className="text-slate-400 hover:text-red-600 transition-colors"
-                                  title="Remove activity"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
+                                onClick={() => removeActivity(activity.id)}
+                                className="text-slate-400 hover:text-red-600 transition-colors"
+                                title="Remove activity"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
                             </div>
                           </div>
                           {activity.description && (
@@ -1916,7 +927,7 @@ export default function Home() {
                             </p>
                           )}
 
-                          {/* Google Drive: Upload & Browse Media */}
+                          {/* Google Drive: Upload & View event photos */}
                           <div className="flex items-center gap-2 mt-2 flex-wrap">
                             <Button
                               variant="outline"
@@ -1948,242 +959,8 @@ export default function Home() {
                               View in Drive
                             </Button>
                           </div>
-                          {/* Context toggle row */}
-                          <div className="flex items-center justify-end mt-2 gap-2">
-                            <Button
-                              variant={isContextOpen ? 'default' : 'outline'}
-                              size="sm"
-                              className={`h-7 text-xs gap-1.5 flex-shrink-0 ${
-                                isContextOpen
-                                  ? 'bg-teal-600 hover:bg-teal-700 text-white'
-                                  : ctxCount > 0
-                                  ? 'border-teal-300 text-teal-600 bg-teal-50 hover:bg-teal-100'
-                                  : 'border-dashed border-slate-300 text-slate-500 hover:border-teal-300 hover:text-teal-600'
-                              }`}
-                              onClick={() =>
-                                setContextPanelId(isContextOpen ? null : activity.id)
-                              }
-                            >
-                              <Paperclip className="h-3 w-3" />
-                              Add Context
-                              {ctxCount > 0 && (
-                                <span className={`text-[10px] rounded-full px-1.5 py-0 font-bold ${
-                                  isContextOpen ? 'bg-white/20' : 'bg-teal-100 text-teal-700'
-                                }`}>
-                                  {ctxCount}
-                                </span>
-                              )}
-                              {isContextOpen ? (
-                                <ChevronUp className="h-3 w-3" />
-                              ) : (
-                                <ChevronDown className="h-3 w-3" />
-                              )}
-                            </Button>
-                          </div>
                         </div>
                       </div>
-
-                      {/* ─── Collapsible Context Panel ─────────────────── */}
-                      {isContextOpen && (
-                        <div className="border-t border-indigo-100 bg-gradient-to-b from-indigo-50/40 to-white">
-                          <div className="p-4 space-y-4">
-                            {/* Section: Upload Media */}
-                            <div>
-                              <div className="flex items-center gap-2 mb-2">
-                                <div className="w-5 h-5 rounded bg-violet-100 flex items-center justify-center">
-                                  <Upload className="h-3 w-3 text-violet-600" />
-                                </div>
-                                <span className="text-xs font-semibold text-slate-700">
-                                  Media &amp; Files
-                                </span>
-                                <span className="text-[10px] text-slate-400">
-                                  Images, flyers, PDFs
-                                </span>
-                              </div>
-
-                              {/* Existing media thumbnails */}
-                              {activity.contextMedia && activity.contextMedia.length > 0 && (
-                                <div className="flex flex-wrap gap-2 mb-2">
-                                  {activity.contextMedia.map((media) => (
-                                    <div
-                                      key={media.id}
-                                      className="relative group rounded-lg overflow-hidden border border-slate-200 bg-white shadow-sm"
-                                    >
-                                      {media.type === 'image' ? (
-                                        <img
-                                          src={media.dataUrl}
-                                          alt={media.name}
-                                          className="w-20 h-20 object-cover"
-                                        />
-                                      ) : (
-                                        <div className="w-20 h-20 flex flex-col items-center justify-center bg-slate-50">
-                                          <FileText className="h-6 w-6 text-slate-400" />
-                                          <span className="text-[8px] text-slate-400 mt-1 truncate max-w-[72px] px-1">
-                                            {media.name}
-                                          </span>
-                                        </div>
-                                      )}
-                                      <button
-                                        className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
-                                        onClick={() =>
-                                          removeContextAttachment(activity.id, media.id)
-                                        }
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
-                                      <div className="absolute bottom-0 inset-x-0 bg-black/50 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <span className="text-[8px] text-white truncate block">
-                                          {media.name}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                              {/* Upload button */}
-                              <div
-                                className="border-2 border-dashed border-slate-200 rounded-lg p-3 text-center cursor-pointer hover:bg-teal-50/50 hover:border-teal-300 transition-all"
-                                onClick={() => contextFileRef.current?.click()}
-                              >
-                                <input
-                                  type="file"
-                                  ref={contextFileRef}
-                                  onChange={(e) => addContextMedia(activity.id, e)}
-                                  accept="image/*,.pdf"
-                                  className="hidden"
-                                />
-                                <ImageIcon className="h-5 w-5 mx-auto mb-1 text-slate-400" />
-                                <span className="text-xs text-slate-500">
-                                  Click to upload image or PDF
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Section: Reference Links */}
-                            <div>
-                              <div className="flex items-center gap-2 mb-2">
-                                <div className="w-5 h-5 rounded bg-blue-100 flex items-center justify-center">
-                                  <LinkIcon className="h-3 w-3 text-blue-600" />
-                                </div>
-                                <span className="text-xs font-semibold text-slate-700">
-                                  Reference Links
-                                </span>
-                                <span className="text-[10px] text-slate-400">
-                                  Websites, registrations, articles
-                                </span>
-                              </div>
-
-                              {/* Existing links */}
-                              {activity.contextLinks && activity.contextLinks.length > 0 && (
-                                <div className="flex flex-wrap gap-1.5 mb-2">
-                                  {activity.contextLinks.map((link) => (
-                                    <div
-                                      key={link.id}
-                                      className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-1 group"
-                                    >
-                                      <LinkIcon className="h-2.5 w-2.5 text-blue-500 flex-shrink-0" />
-                                      <a
-                                        href={link.url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-[10px] text-blue-700 hover:underline truncate max-w-[200px]"
-                                      >
-                                        {link.label || link.url}
-                                      </a>
-                                      <button
-                                        className="text-blue-300 hover:text-red-500 transition-colors"
-                                        onClick={() =>
-                                          removeContextLink(activity.id, link.id)
-                                        }
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                              {/* Add link form */}
-                              <div className="flex gap-2">
-                                <Input
-                                  placeholder="https://..."
-                                  value={contextLinkInput}
-                                  onChange={(e) => setContextLinkInput(e.target.value)}
-                                  className="flex-1 h-8 text-xs"
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      addContextLink(activity.id);
-                                    }
-                                  }}
-                                />
-                                <Input
-                                  placeholder="Label (optional)"
-                                  value={contextLinkLabel}
-                                  onChange={(e) => setContextLinkLabel(e.target.value)}
-                                  className="w-[140px] h-8 text-xs"
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      addContextLink(activity.id);
-                                    }
-                                  }}
-                                />
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 text-xs gap-1 px-3"
-                                  onClick={() => addContextLink(activity.id)}
-                                  disabled={!contextLinkInput.trim()}
-                                >
-                                  <Plus className="h-3 w-3" />
-                                  Add
-                                </Button>
-                              </div>
-                            </div>
-
-                            {/* Section: Notes / Extra Context */}
-                            <div>
-                              <div className="flex items-center gap-2 mb-2">
-                                <div className="w-5 h-5 rounded bg-amber-100 flex items-center justify-center">
-                                  <MessageSquare className="h-3 w-3 text-amber-600" />
-                                </div>
-                                <span className="text-xs font-semibold text-slate-700">
-                                  Notes &amp; Context
-                                </span>
-                                <span className="text-[10px] text-slate-400">
-                                  Key details, talking points, tone guidance
-                                </span>
-                              </div>
-                              <Textarea
-                                placeholder="e.g. Mention the early-bird discount ends Friday. Use a warm, inviting tone. Highlight that childcare is provided..."
-                                value={activity.contextNotes || ''}
-                                onChange={(e) =>
-                                  updateActivity(activity.id, {
-                                    contextNotes: e.target.value,
-                                  })
-                                }
-                                className="h-20 resize-none text-xs leading-relaxed"
-                              />
-                            </div>
-
-                            {/* Context Summary */}
-                            {ctxCount > 0 && (
-                              <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
-                                <Check className="h-3.5 w-3.5 text-emerald-500" />
-                                <span className="text-[11px] text-slate-500">
-                                  {ctxCount} context item{ctxCount > 1 ? 's' : ''} attached
-                                  {' — '}
-                                  <span className="text-teal-600 font-medium">
-                                    will be used during content generation
-                                  </span>
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -2192,166 +969,6 @@ export default function Home() {
           </TabsContent>
         </Tabs>
       </main>
-
-      {/* ─── Add Post to Day Dialog ─────────────────────────────── */}
-      <Dialog open={!!addPostDay} onOpenChange={(open) => !open && setAddPostDay(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Plus className="h-4 w-4 text-teal-600" />
-              Add Post to {addPostDay ? format(parseISO(addPostDay), 'EEEE, MMM d') : ''}
-            </DialogTitle>
-            <DialogDescription>
-              Create a new scheduled post for this day.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            {/* Activity selector */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-600">Activity / Event</Label>
-              <Select value={addPostActivityId} onValueChange={setAddPostActivityId}>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="Select an activity..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {activities.map((a) => (
-                    <SelectItem key={a.id} value={a.id} className="text-xs">
-                      {a.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Angle selector */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-600">Post Angle</Label>
-              <Select value={addPostAngle} onValueChange={(v) => setAddPostAngle(v as PostAngle)}>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.entries(ANGLE_CONFIG) as [PostAngle, typeof ANGLE_CONFIG[PostAngle]][]).map(([key, config]) => (
-                    <SelectItem key={key} value={key} className="text-xs">
-                      {config.emoji} {config.label} — {config.description}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Time selector */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-600">Post Time</Label>
-              <Input
-                type="time"
-                value={addPostTime}
-                onChange={(e) => setAddPostTime(e.target.value)}
-                className="h-9 text-xs"
-              />
-            </div>
-
-            {/* Platform toggles */}
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-600">Platforms</Label>
-              <div className="flex flex-wrap gap-2">
-                {PLATFORMS.map((platform) => {
-                  const isSelected = addPostPlatforms.includes(platform.id);
-                  return (
-                    <button
-                      key={platform.id}
-                      onClick={() => {
-                        setAddPostPlatforms((prev) =>
-                          isSelected
-                            ? prev.filter((p) => p !== platform.id)
-                            : [...prev, platform.id]
-                        );
-                      }}
-                      className={`text-xs px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 ${
-                        isSelected
-                          ? 'bg-teal-50 border-teal-300 text-teal-700 shadow-sm'
-                          : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'
-                      }`}
-                    >
-                      <span>{platform.emoji}</span>
-                      <span>{platform.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setAddPostDay(null)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-indigo-700 hover:to-purple-700 text-white gap-1"
-              onClick={handleAddPostToDay}
-              disabled={!addPostActivityId || addPostPlatforms.length === 0}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add Post
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ─── Review Modal ─────────────────────────────────── */}
-      <Dialog open={!!reviewModal?.open} onOpenChange={(open) => !open && setReviewModal(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg">
-              <span className="text-xl">{reviewModal?.platformEmoji}</span>
-              {reviewModal?.platformTitle} — {reviewModal?.postTitle}
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500">
-              Review the generated content below. Click Copy to copy to clipboard.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex-1 overflow-y-auto min-h-0">
-            <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
-              <pre className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-sans">
-                {reviewModal?.content}
-              </pre>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              onClick={() => {
-                if (reviewModal?.content) {
-                  navigator.clipboard.writeText(reviewModal.content);
-                  setCopiedTab('review-modal');
-                  setTimeout(() => setCopiedTab(null), 2000);
-                }
-              }}
-            >
-              {copiedTab === 'review-modal' ? (
-                <><Check className="h-3.5 w-3.5 text-green-500" /> Copied!</>
-              ) : (
-                <><Copy className="h-3.5 w-3.5" /> Copy to Clipboard</>
-              )}
-            </Button>
-            <Button
-              size="sm"
-              className="bg-teal-600 hover:bg-teal-700"
-              onClick={() => setReviewModal(null)}
-            >
-              Done
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
