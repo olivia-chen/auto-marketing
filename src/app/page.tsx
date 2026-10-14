@@ -223,6 +223,7 @@ export default function Home() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
   const [wixConnected, setWixConnected] = useState<boolean | null>(null);
+  const [exportingCalendar, setExportingCalendar] = useState(false);
 
   // Scheduled posts (auto-generated)
   const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
@@ -602,6 +603,56 @@ export default function Home() {
     setActivities((prev) => prev.filter((a) => a.id !== id));
     // Also remove any manual posts associated with this activity
     setManualPosts((prev) => prev.filter((p) => p.activityId !== id));
+  };
+
+  // ─── Export whole year to the Calendar Export Google Sheet ───
+  const exportCalendarYear = async () => {
+    const year = new Date().getFullYear();
+    type ExportEntry = { date: string; title: string; time?: string; source?: string };
+    const entries = activities
+      .map((a): ExportEntry | null => {
+        // Safely resolve the activity's start date to a Date.
+        let raw: unknown = a.startDate;
+        if (raw && typeof raw === 'object') {
+          const o = raw as { utcDate?: string; localDate?: string };
+          raw = o.utcDate || o.localDate || '';
+        }
+        if (typeof raw !== 'string' || !raw) return null;
+        const d = parseISO(raw);
+        if (isNaN(d.getTime())) return null;
+        if (d.getFullYear() !== year) return null;
+        const hasTime = !(d.getHours() === 0 && d.getMinutes() === 0);
+        return {
+          date: format(d, 'yyyy-MM-dd'),
+          title: a.title,
+          time: hasTime ? format(d, 'h:mma').toLowerCase() : undefined,
+          source: a.source,
+        };
+      })
+      .filter((e): e is ExportEntry => e !== null);
+
+    setExportingCalendar(true);
+    try {
+      const res = await fetch('/api/calendar/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year, entries }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Export failed. Please try again.');
+        return;
+      }
+      const open = window.confirm(
+        `Exported ${data.entryCount ?? entries.length} entries to the "${data.tabName}" tab of the Calendar Export sheet.\n\nOpen the sheet now?`
+      );
+      if (open && data.url) window.open(data.url, '_blank');
+    } catch (err) {
+      console.error('Calendar export failed:', err);
+      alert('Export failed. Please check your connection and try again.');
+    } finally {
+      setExportingCalendar(false);
+    }
   };
 
   // ─── Remove / Restore Scheduled Post ─────────────────────────
@@ -1638,6 +1689,8 @@ export default function Home() {
                 setManualDate(dateISO);
                 setShowAddDialog(true);
               }}
+              onExport={exportCalendarYear}
+              exporting={exportingCalendar}
             />
           </TabsContent>
 
