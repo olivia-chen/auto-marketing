@@ -36,9 +36,10 @@ const HEADER = [
   'createdAt',
   'staff', // appended — do not reorder
   'classroom', // appended — do not reorder
-] as const; // 12 columns → A..L
+  'wixId', // appended — set only for overrides of a Wix activity
+] as const; // 13 columns → A..M
 
-const RANGE = `A2:L`;
+const RANGE = `A2:M`;
 
 const VALID_TYPES = new Set<string>(CAMPAIGN_TYPES.map((t) => t.value));
 
@@ -55,6 +56,8 @@ export interface CalendarEntry {
   createdAt: string;
   staff?: string;
   classroom?: string;
+  /** When set, this row is an override of a Wix activity with this id. */
+  wixId?: string;
 }
 
 export function isConfigured(): boolean {
@@ -99,6 +102,7 @@ function entryToRow(e: CalendarEntry): string[] {
     e.createdAt,
     e.staff || '',
     e.classroom || '',
+    e.wixId || '',
   ];
 }
 
@@ -118,6 +122,7 @@ function rowToEntry(row: string[]): CalendarEntry | null {
     createdAt: row[9] || '',
     staff: row[10] || undefined,
     classroom: row[11] || undefined,
+    wixId: row[12] || undefined,
   };
 }
 
@@ -184,6 +189,7 @@ export async function createEntry(
     createdAt: new Date().toISOString(),
     staff: partial.staff,
     classroom: partial.classroom,
+    wixId: partial.wixId,
   };
 
   await sheets.spreadsheets.values.append({
@@ -236,11 +242,84 @@ export async function updateEntry(
   const sheetRow = index + 2; // +1 header, +1 for 1-based rows
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `'${TAB_NAME}'!A${sheetRow}:L${sheetRow}`,
+    range: `'${TAB_NAME}'!A${sheetRow}:M${sheetRow}`,
     valueInputOption: 'RAW',
     requestBody: { values: [entryToRow(updated)] },
   });
 
+  return updated;
+}
+
+/**
+ * Create or update the override row for a Wix activity (keyed by wixId).
+ * Overrides let the team annotate Wix events/bookings with staff, classroom,
+ * notes and (optionally) a rescheduled time/title without touching Wix.
+ */
+export async function upsertOverride(
+  wixId: string,
+  patch: Partial<CalendarEntry>,
+  createdByEmail: string,
+  createdByName?: string
+): Promise<CalendarEntry> {
+  const auth = getWorkflowAuth();
+  if (!auth) throw new TasksNotConfiguredError();
+  const spreadsheetId = await getWorkflowSpreadsheetId();
+  const sheets = google.sheets({ version: 'v4', auth });
+  await ensureTab(sheets, spreadsheetId);
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${TAB_NAME}'!${RANGE}`,
+  });
+  const rows = res.data.values || [];
+  const index = rows.findIndex((r) => (r[12] || '') === wixId);
+
+  const type = patch.type && VALID_TYPES.has(patch.type) ? patch.type : undefined;
+
+  if (index === -1) {
+    // Create a new override row.
+    const entry: CalendarEntry = {
+      id: uuidv4(),
+      title: patch.title || '',
+      startDate: patch.startDate || '',
+      endDate: patch.endDate,
+      type: type || 'announcement',
+      notes: patch.notes,
+      sourceUrl: patch.sourceUrl,
+      createdByEmail,
+      createdByName: createdByName || createdByEmail,
+      createdAt: new Date().toISOString(),
+      staff: patch.staff,
+      classroom: patch.classroom,
+      wixId,
+    };
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `'${TAB_NAME}'!A2`,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [entryToRow(entry)] },
+    });
+    return entry;
+  }
+
+  const current = rowToEntry(rows[index]);
+  const updated: CalendarEntry = {
+    ...(current as CalendarEntry),
+    ...patch,
+    type: type || current?.type || 'announcement',
+    id: current!.id,
+    wixId,
+    createdByEmail: current!.createdByEmail,
+    createdAt: current!.createdAt,
+  };
+  const sheetRow = index + 2;
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${TAB_NAME}'!A${sheetRow}:M${sheetRow}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [entryToRow(updated)] },
+  });
   return updated;
 }
 

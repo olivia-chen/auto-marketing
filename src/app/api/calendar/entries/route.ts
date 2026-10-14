@@ -5,6 +5,7 @@ import {
   listEntries,
   createEntry,
   updateEntry,
+  upsertOverride,
   deleteEntry,
   entryToActivity,
   isConfigured,
@@ -36,7 +37,11 @@ function handleError(err: unknown, verb: string) {
   );
 }
 
-/** GET /api/calendar/entries → { entries: Activity[] } (manual entries as activities). */
+/**
+ * GET /api/calendar/entries →
+ *   { entries: Activity[], overrides: { [wixId]: {...fields} } }
+ * `entries` are standalone manual entries; `overrides` annotate Wix items.
+ */
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) {
@@ -44,8 +49,22 @@ export async function GET() {
   }
   if (!isConfigured()) return notConfiguredResponse();
   try {
-    const entries = await listEntries();
-    return NextResponse.json({ entries: entries.map(entryToActivity) });
+    const all = await listEntries();
+    const entries = all.filter((e) => !e.wixId).map(entryToActivity);
+    const overrides: Record<string, unknown> = {};
+    for (const e of all) {
+      if (!e.wixId) continue;
+      overrides[e.wixId] = {
+        title: e.title || undefined,
+        startDate: e.startDate || undefined,
+        type: e.type,
+        staff: e.staff,
+        classroom: e.classroom,
+        notes: e.notes,
+        sourceUrl: e.sourceUrl,
+      };
+    }
+    return NextResponse.json({ entries, overrides });
   } catch (err) {
     return handleError(err, 'GET');
   }
@@ -108,6 +127,7 @@ export async function PATCH(req: NextRequest) {
 
   let body: {
     id?: string;
+    wixId?: string;
     title?: string;
     startDate?: string;
     endDate?: string;
@@ -123,8 +143,8 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  if (!body.id) {
-    return NextResponse.json({ error: 'An entry id is required' }, { status: 400 });
+  if (!body.id && !body.wixId) {
+    return NextResponse.json({ error: 'An entry id or wixId is required' }, { status: 400 });
   }
   if (body.title !== undefined && !body.title.trim()) {
     return NextResponse.json({ error: 'Title cannot be empty' }, { status: 400 });
@@ -142,7 +162,17 @@ export async function PATCH(req: NextRequest) {
   if (body.classroom !== undefined) patch.classroom = body.classroom.trim() || undefined;
 
   try {
-    const entry = await updateEntry(body.id, patch);
+    // A wixId means "annotate this Wix activity" → upsert an override row.
+    if (body.wixId) {
+      const entry = await upsertOverride(
+        body.wixId,
+        patch,
+        session.user.email,
+        session.user?.name || session.user.email
+      );
+      return NextResponse.json({ entry, wixId: body.wixId });
+    }
+    const entry = await updateEntry(body.id!, patch);
     if (!entry) {
       return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
     }

@@ -216,13 +216,11 @@ export default function CampaignCalendar({
                 return (
                   <div
                     key={key}
-                    onClick={() => onAddEntry?.(key)}
                     className={`group min-h-[90px] sm:min-h-[110px] border-b border-r border-slate-100 p-1.5 flex flex-col gap-1 ${
                       inMonth ? 'bg-white' : 'bg-slate-50/60'
-                    } ${onAddEntry ? 'cursor-pointer hover:bg-teal-50/40' : ''}`}
-                    title={onAddEntry ? 'Click to add an entry on this day' : undefined}
+                    }`}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center">
                       <span
                         className={`text-[11px] font-medium h-5 w-5 flex items-center justify-center rounded-full ${
                           today
@@ -234,18 +232,6 @@ export default function CampaignCalendar({
                       >
                         {format(day, 'd')}
                       </span>
-                      {onAddEntry && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onAddEntry(key);
-                          }}
-                          className="h-4 w-4 flex items-center justify-center rounded-full text-slate-400 hover:text-white hover:bg-teal-600 transition-colors"
-                          title="Add entry on this day"
-                        >
-                          <Plus className="h-3 w-3" />
-                        </button>
-                      )}
                     </div>
 
                     <div className="flex flex-col gap-0.5">
@@ -256,10 +242,7 @@ export default function CampaignCalendar({
                           <button
                             key={a.id}
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectActivity?.(a);
-                            }}
+                            onClick={() => onSelectActivity?.(a)}
                             className={`text-left text-[10px] leading-tight rounded px-1 py-0.5 truncate block w-full ${style} ${
                               onSelectActivity ? 'cursor-pointer' : ''
                             }`}
@@ -273,16 +256,25 @@ export default function CampaignCalendar({
                       {entries.length > 4 && (
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setOpenDayKey(key);
-                          }}
+                          onClick={() => setOpenDayKey(key)}
                           className="text-[10px] text-teal-600 hover:text-teal-800 hover:underline font-medium px-1 text-left"
                         >
                           +{entries.length - 4} more
                         </button>
                       )}
                     </div>
+
+                    {/* Add-entry button pinned to the bottom of the day card */}
+                    {onAddEntry && (
+                      <button
+                        type="button"
+                        onClick={() => onAddEntry(key)}
+                        className="mt-auto self-center w-full flex items-center justify-center gap-0.5 rounded py-0.5 text-[10px] text-slate-300 hover:text-teal-600 hover:bg-teal-50 opacity-60 group-hover:opacity-100 transition-all"
+                        title="Add entry on this day"
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    )}
                   </div>
                 );
               })}

@@ -160,6 +160,8 @@ export default function Home() {
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
   const [wixConnected, setWixConnected] = useState<boolean | null>(null);
   const [exportingCalendar, setExportingCalendar] = useState(false);
+  // Shared overrides that annotate Wix activities (keyed by Wix activity id).
+  const [overrides, setOverrides] = useState<Record<string, Partial<Activity>>>({});
 
   // Manual event dialog
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -258,6 +260,9 @@ export default function Home() {
           (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
         );
       });
+      if (data.overrides && typeof data.overrides === 'object') {
+        setOverrides(data.overrides as Record<string, Partial<Activity>>);
+      }
     } catch (err) {
       console.error('Failed to load manual calendar entries:', err);
     }
@@ -267,15 +272,33 @@ export default function Home() {
     fetchManualEntries();
   }, [fetchManualEntries]);
 
+  // Apply shared overrides onto Wix activities (manual entries are untouched).
+  const displayedActivities = useMemo(() => {
+    return activities.map((a) => {
+      if (a.source === 'manual') return a;
+      const ov = overrides[a.id];
+      if (!ov) return a;
+      const merged: Activity = { ...a };
+      if (ov.title) merged.title = ov.title;
+      if (ov.startDate) merged.startDate = ov.startDate;
+      if (ov.type) merged.type = ov.type;
+      if (ov.staff !== undefined) merged.staff = ov.staff;
+      if (ov.classroom !== undefined) merged.classroom = ov.classroom;
+      if (ov.notes !== undefined) merged.notes = ov.notes;
+      if (ov.sourceUrl) merged.sourceUrl = ov.sourceUrl;
+      return merged;
+    });
+  }, [activities, overrides]);
+
   const filteredActivities = useMemo(() => {
-    if (!activitySearch.trim()) return activities;
+    if (!activitySearch.trim()) return displayedActivities;
     const q = activitySearch.toLowerCase().trim();
-    return activities.filter(
+    return displayedActivities.filter(
       (a) =>
         a.title.toLowerCase().includes(q) ||
         (a.description && a.description.toLowerCase().includes(q))
     );
-  }, [activities, activitySearch]);
+  }, [displayedActivities, activitySearch]);
 
   // ─── Add manual campaign — persisted (shared) ─────────────────
   const addManualCampaign = async () => {
@@ -376,61 +399,74 @@ export default function Home() {
       staff: a.staff || '',
       classroom: a.classroom || '',
       link: a.sourceUrl || '',
-      // Manual entries keep notes in `notes`; don't pull in a Wix event's
-      // long description (that was the wall-of-text bug).
-      notes: a.source === 'manual' ? a.notes || '' : '',
+      // Use `notes` (manual entries and Wix overrides both store it here);
+      // never the Wix event's long `description` (that was the wall-of-text bug).
+      notes: a.notes || '',
     });
     setEditing(a);
   };
 
   const saveEdit = async () => {
     if (!editing) return;
-    // Only manual entries are editable — Wix activities live in Wix.
-    if (editing.source !== 'manual') {
-      setEditing(null);
-      return;
-    }
     if (!editForm.title.trim()) return;
     const startDate = editForm.dateTime || editing.startDate;
+    const isManual = editing.source === 'manual';
+
+    const fields = {
+      title: editForm.title,
+      startDate,
+      type: editForm.type,
+      staff: editForm.staff,
+      classroom: editForm.classroom,
+      sourceUrl: editForm.link,
+      notes: editForm.notes,
+    };
 
     setSavingEdit(true);
     try {
       const res = await fetch('/api/calendar/entries', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: editing.id,
-          title: editForm.title,
-          startDate,
-          type: editForm.type,
-          staff: editForm.staff,
-          classroom: editForm.classroom,
-          sourceUrl: editForm.link,
-          notes: editForm.notes,
-        }),
+        // Manual entry → update by id. Wix activity → store an override by wixId.
+        body: JSON.stringify(isManual ? { id: editing.id, ...fields } : { wixId: editing.id, ...fields }),
       });
       const data = await res.json();
       if (!res.ok) {
         alert(data.error || 'Failed to save changes.');
         return;
       }
-      const updated: Activity =
-        (data.activity as Activity) || {
-          ...editing,
-          title: editForm.title,
-          startDate,
-          type: editForm.type,
-          staff: editForm.staff || undefined,
-          classroom: editForm.classroom || undefined,
-          sourceUrl: editForm.link || undefined,
-          notes: editForm.notes || undefined,
-          description: editForm.notes || undefined,
-        };
-      setActivities((prev) =>
-        prev
-          .map((a) => (a.id === editing.id ? updated : a))
-          .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
-      );
+
+      if (isManual) {
+        const updated: Activity =
+          (data.activity as Activity) || {
+            ...editing,
+            ...fields,
+            staff: editForm.staff || undefined,
+            classroom: editForm.classroom || undefined,
+            sourceUrl: editForm.link || undefined,
+            notes: editForm.notes || undefined,
+            description: editForm.notes || undefined,
+          };
+        setActivities((prev) =>
+          prev
+            .map((a) => (a.id === editing.id ? updated : a))
+            .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+        );
+      } else {
+        // Keep the override map in sync so the merged view updates.
+        setOverrides((prev) => ({
+          ...prev,
+          [editing.id]: {
+            title: editForm.title || undefined,
+            startDate,
+            type: editForm.type,
+            staff: editForm.staff || undefined,
+            classroom: editForm.classroom || undefined,
+            notes: editForm.notes || undefined,
+            sourceUrl: editForm.link || undefined,
+          },
+        }));
+      }
       setEditing(null);
     } catch (err) {
       console.error('Failed to save entry:', err);
@@ -450,7 +486,7 @@ export default function Home() {
   const exportCalendarYear = async () => {
     const year = new Date().getFullYear();
     type ExportEntry = { date: string; title: string; time?: string; source?: string };
-    const entries = activities
+    const entries = displayedActivities
       .map((a): ExportEntry | null => {
         let raw: unknown = a.startDate;
         if (raw && typeof raw === 'object') {
@@ -906,7 +942,7 @@ export default function Home() {
           {/* ─── CALENDAR TAB ──────────────────────────────────── */}
           <TabsContent value="schedule" className="mt-6 space-y-4">
             <CampaignCalendar
-              activities={activities}
+              activities={displayedActivities}
               onAddEntry={(dateISO) => {
                 setManualDate(dateISO);
                 setShowAddDialog(true);
@@ -1099,24 +1135,23 @@ export default function Home() {
           {editing && (
             <>
               {(() => {
-                const readOnly = editing.source !== 'manual';
+                const isManual = editing.source === 'manual';
                 return (
                   <>
                     <DialogHeader>
-                      <DialogTitle>{readOnly ? 'Entry' : 'Edit Entry'}</DialogTitle>
+                      <DialogTitle>Edit Entry</DialogTitle>
                       <DialogDescription>
-                        {readOnly
-                          ? `${getSourceBadge(editing.source).label} — from Wix, shown read-only. Edit it in Wix.`
-                          : 'Update the time, staff, classroom and notes. Saved and shared with the team.'}
+                        {isManual
+                          ? 'Update the time, staff, classroom and notes. Saved and shared with the team.'
+                          : `${getSourceBadge(editing.source).label} — add staff, classroom and notes. Saved and shared; this doesn't change Wix.`}
                       </DialogDescription>
                     </DialogHeader>
 
                     <div className="space-y-4 py-2">
                       <div className="space-y-2">
-                        <Label>Title {!readOnly && '*'}</Label>
+                        <Label>Title *</Label>
                         <Input
                           value={editForm.title}
-                          disabled={readOnly}
                           onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
                         />
                       </div>
@@ -1126,7 +1161,6 @@ export default function Home() {
                           <Input
                             type="datetime-local"
                             value={editForm.dateTime}
-                            disabled={readOnly}
                             onChange={(e) => setEditForm((f) => ({ ...f, dateTime: e.target.value }))}
                           />
                         </div>
@@ -1134,7 +1168,6 @@ export default function Home() {
                           <Label>Type</Label>
                           <Select
                             value={editForm.type}
-                            disabled={readOnly}
                             onValueChange={(v) => setEditForm((f) => ({ ...f, type: v as CampaignType }))}
                           >
                             <SelectTrigger>
@@ -1156,7 +1189,6 @@ export default function Home() {
                           <Input
                             placeholder="Who's leading it"
                             value={editForm.staff}
-                            disabled={readOnly}
                             onChange={(e) => setEditForm((f) => ({ ...f, staff: e.target.value }))}
                           />
                         </div>
@@ -1165,7 +1197,6 @@ export default function Home() {
                           <Input
                             placeholder="Room / location"
                             value={editForm.classroom}
-                            disabled={readOnly}
                             onChange={(e) => setEditForm((f) => ({ ...f, classroom: e.target.value }))}
                           />
                         </div>
@@ -1175,7 +1206,6 @@ export default function Home() {
                         <Input
                           placeholder="https://..."
                           value={editForm.link}
-                          disabled={readOnly}
                           onChange={(e) => setEditForm((f) => ({ ...f, link: e.target.value }))}
                         />
                       </div>
@@ -1184,7 +1214,6 @@ export default function Home() {
                         <Textarea
                           placeholder="Additional context..."
                           value={editForm.notes}
-                          disabled={readOnly}
                           onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
                           className="h-20 resize-none"
                         />
@@ -1192,40 +1221,33 @@ export default function Home() {
                     </div>
 
                     <DialogFooter className="gap-2 sm:gap-0">
-                      {readOnly ? (
-                        <>
-                          {editing.sourceUrl && (
-                            <a
-                              href={editing.sourceUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-sm text-teal-700 hover:underline mr-auto"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" /> Open in Wix
-                            </a>
-                          )}
-                          <Button variant="outline" onClick={() => setEditing(null)}>
-                            Close
-                          </Button>
-                        </>
+                      {isManual ? (
+                        <Button
+                          variant="ghost"
+                          className="text-red-500 hover:text-red-600 hover:bg-red-50 mr-auto"
+                          onClick={deleteFromEditor}
+                        >
+                          <Trash2 className="h-4 w-4 mr-1" /> Delete
+                        </Button>
                       ) : (
-                        <>
-                          <Button
-                            variant="ghost"
-                            className="text-red-500 hover:text-red-600 hover:bg-red-50 mr-auto"
-                            onClick={deleteFromEditor}
+                        editing.sourceUrl && (
+                          <a
+                            href={editing.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-sm text-teal-700 hover:underline mr-auto"
                           >
-                            <Trash2 className="h-4 w-4 mr-1" /> Delete
-                          </Button>
-                          <Button variant="outline" onClick={() => setEditing(null)}>
-                            Cancel
-                          </Button>
-                          <Button onClick={saveEdit} disabled={savingEdit || !editForm.title.trim()}>
-                            {savingEdit ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
-                            Save
-                          </Button>
-                        </>
+                            <ExternalLink className="h-3.5 w-3.5" /> Open in Wix
+                          </a>
+                        )
                       )}
+                      <Button variant="outline" onClick={() => setEditing(null)}>
+                        Cancel
+                      </Button>
+                      <Button onClick={saveEdit} disabled={savingEdit || !editForm.title.trim()}>
+                        {savingEdit ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
+                        Save
+                      </Button>
                     </DialogFooter>
                   </>
                 );
