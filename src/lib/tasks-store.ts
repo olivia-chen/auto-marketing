@@ -613,3 +613,18 @@ export function makeComment(
 ): TaskComment {
   return { author: email, authorName: name || email, text, at: new Date().toISOString() };
 }
+
+// ─── Shared-workbook helpers (used by the calendar-entries store) ─────
+// Other stores (e.g. manual calendar entries) persist their own tab in the
+// same "TJCF Marketing Workflow" spreadsheet, so expose the authenticated
+// client and the resolved spreadsheet id without duplicating the lookup.
+
+export function getWorkflowAuth(): ReturnType<typeof getAuth> {
+  return getAuth();
+}
+
+export async function getWorkflowSpreadsheetId(): Promise<string> {
+  const auth = getAuth();
+  if (!auth) throw new TasksNotConfiguredError();
+  return getSpreadsheetId(auth);
+}

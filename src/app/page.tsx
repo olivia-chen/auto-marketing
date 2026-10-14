@@ -519,6 +519,29 @@ export default function Home() {
     fetchActivities();
   }, [fetchActivities]);
 
+  // Load shared manual calendar entries (persisted in the workflow sheet) and
+  // merge them in, replacing any in-memory manual entries with the stored set.
+  const fetchManualEntries = useCallback(async () => {
+    try {
+      const res = await fetch('/api/calendar/entries');
+      if (!res.ok) return; // not configured / not signed in — leave as-is
+      const data = await res.json();
+      const stored: Activity[] = Array.isArray(data.entries) ? data.entries : [];
+      setActivities((prev) => {
+        const nonManual = prev.filter((a) => a.source !== 'manual');
+        return [...nonManual, ...stored].sort(
+          (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
+        );
+      });
+    } catch (err) {
+      console.error('Failed to load manual calendar entries:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchManualEntries();
+  }, [fetchManualEntries]);
+
   // ─── Removed posts tracking (persists across re-renders) ──────
   const [removedPostKeys, setRemovedPostKeys] = useState<Set<string>>(new Set());
 
@@ -570,26 +593,22 @@ export default function Home() {
     return groupByDay(scheduledPosts, weekRange.start);
   }, [scheduledPosts, weekStartKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Add manual campaign
-  const addManualCampaign = () => {
+  // Add manual campaign — persisted (shared) via the calendar-entries API so
+  // the whole team and the year export see the same data.
+  const addManualCampaign = async () => {
     if (!manualTitle) return;
-    const newActivity: Activity = {
-      id: uuidv4(),
+    // manualDate may be a bare yyyy-MM-dd (day click) — keep it as-is; the
+    // store treats a date-only value as an all-day entry.
+    const startDate = manualDate || new Date().toISOString();
+    const payload = {
       title: manualTitle,
-      description: manualNotes,
-      startDate: manualDate || new Date().toISOString(),
-      sourceUrl: manualLink,
-      source: 'manual',
+      startDate,
       type: manualType,
-      mediaBase64: manualImage || undefined,
-      notes: manualNotes,
-      selected: true,
+      notes: manualNotes || undefined,
+      sourceUrl: manualLink || undefined,
     };
-    setActivities((prev) =>
-      [...prev, newActivity].sort(
-        (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
-      )
-    );
+
+    // Clear the form immediately for a responsive feel.
     setManualTitle('');
     setManualDate('');
     setManualType('announcement');
@@ -597,12 +616,67 @@ export default function Home() {
     setManualNotes('');
     setManualImage(null);
     setShowAddDialog(false);
+
+    const addLocal = (activity: Activity) => {
+      setActivities((prev) =>
+        [...prev, activity].sort(
+          (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
+        )
+      );
+    };
+
+    try {
+      const res = await fetch('/api/calendar/entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok && data.activity) {
+        addLocal(data.activity as Activity);
+      } else {
+        // Persistence unavailable — keep the entry in-memory so the user
+        // isn't blocked, but warn that it won't be shared/saved.
+        addLocal({
+          id: uuidv4(),
+          title: payload.title,
+          description: manualNotes,
+          startDate,
+          sourceUrl: manualLink || undefined,
+          source: 'manual',
+          type: manualType,
+          notes: manualNotes,
+          selected: false,
+        });
+        if (data?.error) console.warn('Manual entry not persisted:', data.error);
+      }
+    } catch (err) {
+      console.error('Failed to save manual entry:', err);
+      addLocal({
+        id: uuidv4(),
+        title: payload.title,
+        description: manualNotes,
+        startDate,
+        sourceUrl: manualLink || undefined,
+        source: 'manual',
+        type: manualType,
+        notes: manualNotes,
+        selected: false,
+      });
+    }
   };
 
   const removeActivity = (id: string) => {
+    const target = activities.find((a) => a.id === id);
     setActivities((prev) => prev.filter((a) => a.id !== id));
     // Also remove any manual posts associated with this activity
     setManualPosts((prev) => prev.filter((p) => p.activityId !== id));
+    // Delete the shared/persisted copy of manual entries (best-effort).
+    if (target?.source === 'manual') {
+      fetch(`/api/calendar/entries?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }).catch((err) => console.error('Failed to delete manual entry:', err));
+    }
   };
 
   // ─── Export whole year to the Calendar Export Google Sheet ───
