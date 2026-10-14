@@ -32,6 +32,9 @@ export interface Activity {
   // For manual additions
   mediaBase64?: string;
   notes?: string;
+  // Manual schedule details (classes, storytime, etc.)
+  staff?: string;
+  classroom?: string;
   // Whether this item is selected for content generation
   selected?: boolean;
   // Status from Wix

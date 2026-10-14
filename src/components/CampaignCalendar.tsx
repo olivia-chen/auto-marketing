@@ -18,13 +18,18 @@ import {
 import {
   ChevronLeft,
   ChevronRight,
-  CalendarDays,
   Download,
   Loader2,
-  ExternalLink,
   Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import type { Activity } from '@/lib/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -54,15 +59,19 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 export default function CampaignCalendar({
   activities,
   onAddEntry,
+  onSelectActivity,
   onExport,
   exporting = false,
 }: {
   activities: Activity[];
   onAddEntry?: (dateISO: string) => void;
+  onSelectActivity?: (activity: Activity) => void;
   onExport?: () => void;
   exporting?: boolean;
 }) {
   const [viewDate, setViewDate] = useState(() => startOfMonth(new Date()));
+  // Day-detail popup (opened via "+N more" or clicking a day)
+  const [openDayKey, setOpenDayKey] = useState<string | null>(null);
 
   // Bucket activities by yyyy-MM-dd
   const byDay = useMemo(() => {
@@ -207,9 +216,11 @@ export default function CampaignCalendar({
                 return (
                   <div
                     key={key}
-                    className={`min-h-[90px] sm:min-h-[110px] border-b border-r border-slate-100 p-1.5 flex flex-col gap-1 ${
+                    onClick={() => onAddEntry?.(key)}
+                    className={`group min-h-[90px] sm:min-h-[110px] border-b border-r border-slate-100 p-1.5 flex flex-col gap-1 ${
                       inMonth ? 'bg-white' : 'bg-slate-50/60'
-                    }`}
+                    } ${onAddEntry ? 'cursor-pointer hover:bg-teal-50/40' : ''}`}
+                    title={onAddEntry ? 'Click to add an entry on this day' : undefined}
                   >
                     <div className="flex items-center justify-between">
                       <span
@@ -225,8 +236,11 @@ export default function CampaignCalendar({
                       </span>
                       {onAddEntry && inMonth && (
                         <button
-                          onClick={() => onAddEntry(key)}
-                          className="opacity-0 hover:opacity-100 focus:opacity-100 text-slate-300 hover:text-teal-600 transition-opacity"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAddEntry(key);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-slate-300 hover:text-teal-600 transition-opacity"
                           title="Add entry on this day"
                         >
                           <Plus className="h-3 w-3" />
@@ -238,38 +252,35 @@ export default function CampaignCalendar({
                       {entries.slice(0, 4).map((a) => {
                         const t = timeLabel(a);
                         const style = SOURCE_STYLE[a.source] || SOURCE_STYLE.manual;
-                        const content = (
-                          <>
+                        return (
+                          <button
+                            key={a.id}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectActivity?.(a);
+                            }}
+                            className={`text-left text-[10px] leading-tight rounded px-1 py-0.5 truncate block w-full ${style} ${
+                              onSelectActivity ? 'cursor-pointer' : ''
+                            }`}
+                            title={a.title}
+                          >
                             {t && <span className="font-semibold mr-0.5">{t}</span>}
                             {a.title}
-                          </>
-                        );
-                        return a.sourceUrl ? (
-                          <a
-                            key={a.id}
-                            href={a.sourceUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className={`text-[10px] leading-tight rounded px-1 py-0.5 truncate flex items-center gap-0.5 ${style}`}
-                            title={a.title}
-                          >
-                            <span className="truncate">{content}</span>
-                            <ExternalLink className="h-2 w-2 flex-shrink-0 opacity-60" />
-                          </a>
-                        ) : (
-                          <span
-                            key={a.id}
-                            className={`text-[10px] leading-tight rounded px-1 py-0.5 truncate block ${style}`}
-                            title={a.title}
-                          >
-                            {content}
-                          </span>
+                          </button>
                         );
                       })}
                       {entries.length > 4 && (
-                        <span className="text-[10px] text-slate-400 px-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenDayKey(key);
+                          }}
+                          className="text-[10px] text-teal-600 hover:text-teal-800 hover:underline font-medium px-1 text-left"
+                        >
                           +{entries.length - 4} more
-                        </span>
+                        </button>
                       )}
                     </div>
                   </div>
@@ -292,6 +303,62 @@ export default function CampaignCalendar({
           <span className="h-2.5 w-2.5 rounded-sm bg-amber-200" /> Manual entry
         </span>
       </div>
+
+      {/* Day-detail popup (all entries for a day) */}
+      <Dialog open={!!openDayKey} onOpenChange={(open) => !open && setOpenDayKey(null)}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>
+              {openDayKey ? format(parseISO(openDayKey), 'EEEE, MMMM d, yyyy') : ''}
+            </DialogTitle>
+            <DialogDescription>
+              {openDayKey ? `${(byDay.get(openDayKey) || []).length} scheduled` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5 max-h-[55vh] overflow-y-auto py-1">
+            {openDayKey &&
+              (byDay.get(openDayKey) || []).map((a) => {
+                const t = timeLabel(a);
+                const style = SOURCE_STYLE[a.source] || SOURCE_STYLE.manual;
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => {
+                      setOpenDayKey(null);
+                      onSelectActivity?.(a);
+                    }}
+                    className={`w-full text-left rounded-lg px-3 py-2 text-xs transition-colors ${style} hover:brightness-95`}
+                  >
+                    <div className="font-medium">
+                      {t && <span className="mr-1 font-semibold">{t}</span>}
+                      {a.title}
+                    </div>
+                    {(a.classroom || a.staff) && (
+                      <div className="mt-0.5 opacity-80">
+                        {[a.classroom, a.staff].filter(Boolean).join(' · ')}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+          </div>
+          {onAddEntry && openDayKey && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full gap-1.5 border-teal-200 text-teal-700 hover:bg-teal-50"
+              onClick={() => {
+                const key = openDayKey;
+                setOpenDayKey(null);
+                onAddEntry(key);
+              }}
+            >
+              <Plus className="h-4 w-4" /> Add entry on this day
+            </Button>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

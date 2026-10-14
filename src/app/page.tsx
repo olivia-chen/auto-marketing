@@ -168,6 +168,21 @@ export default function Home() {
   const [manualType, setManualType] = useState<CampaignType>('announcement');
   const [manualLink, setManualLink] = useState('');
   const [manualNotes, setManualNotes] = useState('');
+  const [manualStaff, setManualStaff] = useState('');
+  const [manualClassroom, setManualClassroom] = useState('');
+
+  // Entry editor dialog (click an activity on the calendar)
+  const [editing, setEditing] = useState<Activity | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editForm, setEditForm] = useState({
+    title: '',
+    dateTime: '',
+    type: 'announcement' as CampaignType,
+    staff: '',
+    classroom: '',
+    link: '',
+    notes: '',
+  });
 
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('schedule');
@@ -272,6 +287,8 @@ export default function Home() {
       type: manualType,
       notes: manualNotes || undefined,
       sourceUrl: manualLink || undefined,
+      staff: manualStaff || undefined,
+      classroom: manualClassroom || undefined,
     };
 
     // Clear the form immediately for a responsive feel.
@@ -280,6 +297,8 @@ export default function Home() {
     setManualType('announcement');
     setManualLink('');
     setManualNotes('');
+    setManualStaff('');
+    setManualClassroom('');
     setShowAddDialog(false);
 
     const addLocal = (activity: Activity) => {
@@ -288,6 +307,21 @@ export default function Home() {
           (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
         )
       );
+    };
+
+    // Built from the captured payload (not component state, which is reset above).
+    const fallbackActivity: Activity = {
+      id: uuidv4(),
+      title: payload.title,
+      description: payload.notes,
+      startDate,
+      sourceUrl: payload.sourceUrl,
+      source: 'manual',
+      type: payload.type,
+      notes: payload.notes,
+      staff: payload.staff,
+      classroom: payload.classroom,
+      selected: false,
     };
 
     try {
@@ -302,32 +336,12 @@ export default function Home() {
       } else {
         // Persistence unavailable — keep the entry in-memory so the user
         // isn't blocked, but warn that it won't be shared/saved.
-        addLocal({
-          id: uuidv4(),
-          title: payload.title,
-          description: manualNotes,
-          startDate,
-          sourceUrl: manualLink || undefined,
-          source: 'manual',
-          type: manualType,
-          notes: manualNotes,
-          selected: false,
-        });
+        addLocal(fallbackActivity);
         if (data?.error) console.warn('Manual entry not persisted:', data.error);
       }
     } catch (err) {
       console.error('Failed to save manual entry:', err);
-      addLocal({
-        id: uuidv4(),
-        title: payload.title,
-        description: manualNotes,
-        startDate,
-        sourceUrl: manualLink || undefined,
-        source: 'manual',
-        type: manualType,
-        notes: manualNotes,
-        selected: false,
-      });
+      addLocal(fallbackActivity);
     }
   };
 
@@ -340,6 +354,94 @@ export default function Home() {
         method: 'DELETE',
       }).catch((err) => console.error('Failed to delete manual entry:', err));
     }
+  };
+
+  // ─── Entry editor (click an activity on the calendar) ─────────
+  const openEditor = (a: Activity) => {
+    // Build a datetime-local value (yyyy-MM-ddTHH:mm) from startDate.
+    let dateTime = '';
+    let raw: unknown = a.startDate;
+    if (raw && typeof raw === 'object') {
+      const o = raw as { utcDate?: string; localDate?: string };
+      raw = o.utcDate || o.localDate || '';
+    }
+    if (typeof raw === 'string' && raw) {
+      const d = parseISO(raw);
+      if (!isNaN(d.getTime())) dateTime = format(d, "yyyy-MM-dd'T'HH:mm");
+    }
+    setEditForm({
+      title: a.title || '',
+      dateTime,
+      type: a.type || 'announcement',
+      staff: a.staff || '',
+      classroom: a.classroom || '',
+      link: a.sourceUrl || '',
+      notes: a.notes || a.description || '',
+    });
+    setEditing(a);
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    // Only manual entries are editable — Wix activities live in Wix.
+    if (editing.source !== 'manual') {
+      setEditing(null);
+      return;
+    }
+    if (!editForm.title.trim()) return;
+    const startDate = editForm.dateTime || editing.startDate;
+
+    setSavingEdit(true);
+    try {
+      const res = await fetch('/api/calendar/entries', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editing.id,
+          title: editForm.title,
+          startDate,
+          type: editForm.type,
+          staff: editForm.staff,
+          classroom: editForm.classroom,
+          sourceUrl: editForm.link,
+          notes: editForm.notes,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to save changes.');
+        return;
+      }
+      const updated: Activity =
+        (data.activity as Activity) || {
+          ...editing,
+          title: editForm.title,
+          startDate,
+          type: editForm.type,
+          staff: editForm.staff || undefined,
+          classroom: editForm.classroom || undefined,
+          sourceUrl: editForm.link || undefined,
+          notes: editForm.notes || undefined,
+          description: editForm.notes || undefined,
+        };
+      setActivities((prev) =>
+        prev
+          .map((a) => (a.id === editing.id ? updated : a))
+          .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+      );
+      setEditing(null);
+    } catch (err) {
+      console.error('Failed to save entry:', err);
+      alert('Failed to save. Please check your connection and try again.');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const deleteFromEditor = () => {
+    if (!editing) return;
+    removeActivity(editing.id);
+    setEditing(null);
   };
 
   // ─── Export whole year to the Calendar Export Google Sheet ───
@@ -740,6 +842,24 @@ export default function Home() {
                           </Select>
                         </div>
                       </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Staff</Label>
+                          <Input
+                            placeholder="Who's leading it"
+                            value={manualStaff}
+                            onChange={(e) => setManualStaff(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Classroom</Label>
+                          <Input
+                            placeholder="Room / location"
+                            value={manualClassroom}
+                            onChange={(e) => setManualClassroom(e.target.value)}
+                          />
+                        </div>
+                      </div>
                       <div className="space-y-2">
                         <Label>Source Link</Label>
                         <Input
@@ -789,6 +909,7 @@ export default function Home() {
                 setManualDate(dateISO);
                 setShowAddDialog(true);
               }}
+              onSelectActivity={openEditor}
               onExport={exportCalendarYear}
               exporting={exportingCalendar}
             />
@@ -969,6 +1090,159 @@ export default function Home() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* ─── Entry Editor Dialog ──────────────────────────────── */}
+      <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          {editing && (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  {editing.source === 'manual' ? 'Edit Entry' : editing.title}
+                </DialogTitle>
+                <DialogDescription>
+                  {editing.source === 'manual' ? (
+                    <>Update the time, staff, classroom and notes. Saved and shared with the team.</>
+                  ) : (
+                    <>
+                      {getSourceBadge(editing.source).label} — this comes from Wix and is
+                      shown here read-only. Edit it in Wix.
+                    </>
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+
+              {editing.source === 'manual' ? (
+                <div className="space-y-4 py-2">
+                  <div className="space-y-2">
+                    <Label>Title *</Label>
+                    <Input
+                      value={editForm.title}
+                      onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Date &amp; Time</Label>
+                      <Input
+                        type="datetime-local"
+                        value={editForm.dateTime}
+                        onChange={(e) => setEditForm((f) => ({ ...f, dateTime: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Type</Label>
+                      <Select
+                        value={editForm.type}
+                        onValueChange={(v) => setEditForm((f) => ({ ...f, type: v as CampaignType }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CAMPAIGN_TYPES.map((ct) => (
+                            <SelectItem key={ct.value} value={ct.value}>
+                              {ct.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Staff</Label>
+                      <Input
+                        placeholder="Who's leading it"
+                        value={editForm.staff}
+                        onChange={(e) => setEditForm((f) => ({ ...f, staff: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Classroom</Label>
+                      <Input
+                        placeholder="Room / location"
+                        value={editForm.classroom}
+                        onChange={(e) => setEditForm((f) => ({ ...f, classroom: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Source Link</Label>
+                    <Input
+                      placeholder="https://..."
+                      value={editForm.link}
+                      onChange={(e) => setEditForm((f) => ({ ...f, link: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Notes</Label>
+                    <Textarea
+                      placeholder="Additional context..."
+                      value={editForm.notes}
+                      onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
+                      className="h-20 resize-none"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 py-2 text-sm">
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <Calendar className="h-4 w-4 text-slate-400" />
+                    {formatActivityDate(editing.startDate)}
+                  </div>
+                  {locationText(editing.location) && (
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <MapPin className="h-4 w-4 text-slate-400" />
+                      {locationText(editing.location)}
+                    </div>
+                  )}
+                  {editing.description && (
+                    <p className="text-slate-600 whitespace-pre-wrap">{editing.description}</p>
+                  )}
+                  {editing.sourceUrl && (
+                    <a
+                      href={editing.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-teal-700 hover:underline"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> Open in Wix
+                    </a>
+                  )}
+                </div>
+              )}
+
+              <DialogFooter className="gap-2 sm:gap-0">
+                {editing.source === 'manual' ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      className="text-red-500 hover:text-red-600 hover:bg-red-50 mr-auto"
+                      onClick={deleteFromEditor}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" /> Delete
+                    </Button>
+                    <Button variant="outline" onClick={() => setEditing(null)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={saveEdit} disabled={savingEdit || !editForm.title.trim()}>
+                      {savingEdit ? (
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      ) : null}
+                      Save
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="outline" onClick={() => setEditing(null)}>
+                    Close
+                  </Button>
+                )}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

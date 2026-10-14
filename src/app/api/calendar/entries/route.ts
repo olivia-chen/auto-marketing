@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth';
 import {
   listEntries,
   createEntry,
+  updateEntry,
   deleteEntry,
   entryToActivity,
   isConfigured,
@@ -94,6 +95,60 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ entry, activity: entryToActivity(entry) }, { status: 201 });
   } catch (err) {
     return handleError(err, 'POST');
+  }
+}
+
+/** PATCH /api/calendar/entries → update a shared manual entry by id. */
+export async function PATCH(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.email) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  }
+  if (!isConfigured()) return notConfiguredResponse();
+
+  let body: {
+    id?: string;
+    title?: string;
+    startDate?: string;
+    endDate?: string;
+    type?: CampaignType;
+    notes?: string;
+    sourceUrl?: string;
+    staff?: string;
+    classroom?: string;
+  };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  if (!body.id) {
+    return NextResponse.json({ error: 'An entry id is required' }, { status: 400 });
+  }
+  if (body.title !== undefined && !body.title.trim()) {
+    return NextResponse.json({ error: 'Title cannot be empty' }, { status: 400 });
+  }
+
+  // Only pass through fields that were actually provided.
+  const patch: Record<string, unknown> = {};
+  if (body.title !== undefined) patch.title = body.title.trim();
+  if (body.startDate !== undefined) patch.startDate = body.startDate;
+  if (body.endDate !== undefined) patch.endDate = body.endDate || undefined;
+  if (body.type !== undefined) patch.type = body.type;
+  if (body.notes !== undefined) patch.notes = body.notes.trim() || undefined;
+  if (body.sourceUrl !== undefined) patch.sourceUrl = body.sourceUrl.trim() || undefined;
+  if (body.staff !== undefined) patch.staff = body.staff.trim() || undefined;
+  if (body.classroom !== undefined) patch.classroom = body.classroom.trim() || undefined;
+
+  try {
+    const entry = await updateEntry(body.id, patch);
+    if (!entry) {
+      return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
+    }
+    return NextResponse.json({ entry, activity: entryToActivity(entry) });
+  } catch (err) {
+    return handleError(err, 'PATCH');
   }
 }
 
