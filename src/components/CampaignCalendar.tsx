@@ -269,10 +269,11 @@ export default function CampaignCalendar({
                       <button
                         type="button"
                         onClick={() => onAddEntry(key)}
-                        className="mt-auto self-center w-full flex items-center justify-center gap-0.5 rounded py-0.5 text-[10px] text-slate-300 hover:text-teal-600 hover:bg-teal-50 opacity-60 group-hover:opacity-100 transition-all"
+                        className="mt-auto self-center w-full flex items-center justify-center gap-1 rounded-md py-1 text-[10px] font-medium border border-dashed border-teal-300 text-teal-600 bg-teal-50/70 hover:bg-teal-600 hover:text-white hover:border-teal-600 transition-colors"
                         title="Add entry on this day"
                       >
                         <Plus className="h-3 w-3" />
+                        <span className="hidden sm:inline">Add</span>
                       </button>
                     )}
                   </div>
