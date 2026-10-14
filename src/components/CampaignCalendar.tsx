@@ -234,13 +234,13 @@ export default function CampaignCalendar({
                       >
                         {format(day, 'd')}
                       </span>
-                      {onAddEntry && inMonth && (
+                      {onAddEntry && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             onAddEntry(key);
                           }}
-                          className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-slate-300 hover:text-teal-600 transition-opacity"
+                          className="h-4 w-4 flex items-center justify-center rounded-full text-slate-400 hover:text-white hover:bg-teal-600 transition-colors"
                           title="Add entry on this day"
                         >
                           <Plus className="h-3 w-3" />

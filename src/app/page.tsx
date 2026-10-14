@@ -376,7 +376,9 @@ export default function Home() {
       staff: a.staff || '',
       classroom: a.classroom || '',
       link: a.sourceUrl || '',
-      notes: a.notes || a.description || '',
+      // Manual entries keep notes in `notes`; don't pull in a Wix event's
+      // long description (that was the wall-of-text bug).
+      notes: a.source === 'manual' ? a.notes || '' : '',
     });
     setEditing(a);
   };
@@ -1096,149 +1098,138 @@ export default function Home() {
         <DialogContent className="sm:max-w-[500px]">
           {editing && (
             <>
-              <DialogHeader>
-                <DialogTitle>
-                  {editing.source === 'manual' ? 'Edit Entry' : editing.title}
-                </DialogTitle>
-                <DialogDescription>
-                  {editing.source === 'manual' ? (
-                    <>Update the time, staff, classroom and notes. Saved and shared with the team.</>
-                  ) : (
-                    <>
-                      {getSourceBadge(editing.source).label} — this comes from Wix and is
-                      shown here read-only. Edit it in Wix.
-                    </>
-                  )}
-                </DialogDescription>
-              </DialogHeader>
-
-              {editing.source === 'manual' ? (
-                <div className="space-y-4 py-2">
-                  <div className="space-y-2">
-                    <Label>Title *</Label>
-                    <Input
-                      value={editForm.title}
-                      onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Date &amp; Time</Label>
-                      <Input
-                        type="datetime-local"
-                        value={editForm.dateTime}
-                        onChange={(e) => setEditForm((f) => ({ ...f, dateTime: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Type</Label>
-                      <Select
-                        value={editForm.type}
-                        onValueChange={(v) => setEditForm((f) => ({ ...f, type: v as CampaignType }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {CAMPAIGN_TYPES.map((ct) => (
-                            <SelectItem key={ct.value} value={ct.value}>
-                              {ct.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Staff</Label>
-                      <Input
-                        placeholder="Who's leading it"
-                        value={editForm.staff}
-                        onChange={(e) => setEditForm((f) => ({ ...f, staff: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Classroom</Label>
-                      <Input
-                        placeholder="Room / location"
-                        value={editForm.classroom}
-                        onChange={(e) => setEditForm((f) => ({ ...f, classroom: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Source Link</Label>
-                    <Input
-                      placeholder="https://..."
-                      value={editForm.link}
-                      onChange={(e) => setEditForm((f) => ({ ...f, link: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Notes</Label>
-                    <Textarea
-                      placeholder="Additional context..."
-                      value={editForm.notes}
-                      onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
-                      className="h-20 resize-none"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3 py-2 text-sm">
-                  <div className="flex items-center gap-2 text-slate-600">
-                    <Calendar className="h-4 w-4 text-slate-400" />
-                    {formatActivityDate(editing.startDate)}
-                  </div>
-                  {locationText(editing.location) && (
-                    <div className="flex items-center gap-2 text-slate-600">
-                      <MapPin className="h-4 w-4 text-slate-400" />
-                      {locationText(editing.location)}
-                    </div>
-                  )}
-                  {editing.description && (
-                    <p className="text-slate-600 whitespace-pre-wrap">{editing.description}</p>
-                  )}
-                  {editing.sourceUrl && (
-                    <a
-                      href={editing.sourceUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-teal-700 hover:underline"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" /> Open in Wix
-                    </a>
-                  )}
-                </div>
-              )}
-
-              <DialogFooter className="gap-2 sm:gap-0">
-                {editing.source === 'manual' ? (
+              {(() => {
+                const readOnly = editing.source !== 'manual';
+                return (
                   <>
-                    <Button
-                      variant="ghost"
-                      className="text-red-500 hover:text-red-600 hover:bg-red-50 mr-auto"
-                      onClick={deleteFromEditor}
-                    >
-                      <Trash2 className="h-4 w-4 mr-1" /> Delete
-                    </Button>
-                    <Button variant="outline" onClick={() => setEditing(null)}>
-                      Cancel
-                    </Button>
-                    <Button onClick={saveEdit} disabled={savingEdit || !editForm.title.trim()}>
-                      {savingEdit ? (
-                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                      ) : null}
-                      Save
-                    </Button>
+                    <DialogHeader>
+                      <DialogTitle>{readOnly ? 'Entry' : 'Edit Entry'}</DialogTitle>
+                      <DialogDescription>
+                        {readOnly
+                          ? `${getSourceBadge(editing.source).label} — from Wix, shown read-only. Edit it in Wix.`
+                          : 'Update the time, staff, classroom and notes. Saved and shared with the team.'}
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4 py-2">
+                      <div className="space-y-2">
+                        <Label>Title {!readOnly && '*'}</Label>
+                        <Input
+                          value={editForm.title}
+                          disabled={readOnly}
+                          onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Date &amp; Time</Label>
+                          <Input
+                            type="datetime-local"
+                            value={editForm.dateTime}
+                            disabled={readOnly}
+                            onChange={(e) => setEditForm((f) => ({ ...f, dateTime: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Type</Label>
+                          <Select
+                            value={editForm.type}
+                            disabled={readOnly}
+                            onValueChange={(v) => setEditForm((f) => ({ ...f, type: v as CampaignType }))}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {CAMPAIGN_TYPES.map((ct) => (
+                                <SelectItem key={ct.value} value={ct.value}>
+                                  {ct.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Staff</Label>
+                          <Input
+                            placeholder="Who's leading it"
+                            value={editForm.staff}
+                            disabled={readOnly}
+                            onChange={(e) => setEditForm((f) => ({ ...f, staff: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Classroom</Label>
+                          <Input
+                            placeholder="Room / location"
+                            value={editForm.classroom}
+                            disabled={readOnly}
+                            onChange={(e) => setEditForm((f) => ({ ...f, classroom: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Source Link</Label>
+                        <Input
+                          placeholder="https://..."
+                          value={editForm.link}
+                          disabled={readOnly}
+                          onChange={(e) => setEditForm((f) => ({ ...f, link: e.target.value }))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Notes</Label>
+                        <Textarea
+                          placeholder="Additional context..."
+                          value={editForm.notes}
+                          disabled={readOnly}
+                          onChange={(e) => setEditForm((f) => ({ ...f, notes: e.target.value }))}
+                          className="h-20 resize-none"
+                        />
+                      </div>
+                    </div>
+
+                    <DialogFooter className="gap-2 sm:gap-0">
+                      {readOnly ? (
+                        <>
+                          {editing.sourceUrl && (
+                            <a
+                              href={editing.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-sm text-teal-700 hover:underline mr-auto"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" /> Open in Wix
+                            </a>
+                          )}
+                          <Button variant="outline" onClick={() => setEditing(null)}>
+                            Close
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            variant="ghost"
+                            className="text-red-500 hover:text-red-600 hover:bg-red-50 mr-auto"
+                            onClick={deleteFromEditor}
+                          >
+                            <Trash2 className="h-4 w-4 mr-1" /> Delete
+                          </Button>
+                          <Button variant="outline" onClick={() => setEditing(null)}>
+                            Cancel
+                          </Button>
+                          <Button onClick={saveEdit} disabled={savingEdit || !editForm.title.trim()}>
+                            {savingEdit ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
+                            Save
+                          </Button>
+                        </>
+                      )}
+                    </DialogFooter>
                   </>
-                ) : (
-                  <Button variant="outline" onClick={() => setEditing(null)}>
-                    Close
-                  </Button>
-                )}
-              </DialogFooter>
+                );
+              })()}
             </>
           )}
         </DialogContent>
