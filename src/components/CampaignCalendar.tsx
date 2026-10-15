@@ -184,7 +184,7 @@ export default function CampaignCalendar({
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              Export year
+              Export to Google Sheet
             </Button>
           )}
         </div>
