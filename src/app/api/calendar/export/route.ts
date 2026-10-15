@@ -11,6 +11,13 @@ import {
   isSameMonth,
 } from 'date-fns';
 import { authOptions } from '@/lib/auth';
+import {
+  getWorkflowAuth,
+  getWorkflowSpreadsheetId,
+  serviceAccountEmail,
+  TasksNotConfiguredError,
+  TasksStorageError,
+} from '@/lib/tasks-store';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -20,31 +27,6 @@ interface ExportEntry {
   title: string;
   time?: string;
   source?: string;
-}
-
-function getAuth() {
-  const credentialsJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  if (!credentialsJson) return null;
-  try {
-    const credentials = JSON.parse(credentialsJson);
-    if (credentials.private_key) {
-      credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
-    }
-    return new google.auth.GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-  } catch {
-    return null;
-  }
-}
-
-function serviceAccountEmail(): string {
-  try {
-    return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}').client_email || 'the service account';
-  } catch {
-    return 'the service account';
-  }
 }
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -91,18 +73,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   }
 
-  const sheetId = process.env.CALENDAR_EXPORT_SHEET_ID;
-  if (!sheetId) {
-    return NextResponse.json(
-      {
-        error:
-          `No export sheet configured. Create a blank Google Sheet, share it as Editor with ${serviceAccountEmail()}, ` +
-          `then set CALENDAR_EXPORT_SHEET_ID to its id in the environment.`,
-      },
-      { status: 400 }
-    );
-  }
-
   let body: { year?: number; entries?: ExportEntry[] };
   try {
     body = await req.json();
@@ -121,7 +91,7 @@ export async function POST(req: NextRequest) {
     else byDate.set(e.date, [e]);
   }
 
-  const auth = getAuth();
+  const auth = getWorkflowAuth();
   if (!auth) {
     return NextResponse.json(
       { error: 'Google service account is not configured.' },
@@ -129,7 +99,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const tabName = String(year);
+  // Default to the same spreadsheet the Workflow tool uses (already shared
+  // with the service account) and write to a per-year tab. An optional
+  // CALENDAR_EXPORT_SHEET_ID still overrides it with a dedicated sheet.
+  let sheetId: string;
+  try {
+    sheetId = process.env.CALENDAR_EXPORT_SHEET_ID || (await getWorkflowSpreadsheetId());
+  } catch (err) {
+    if (err instanceof TasksNotConfiguredError) {
+      return NextResponse.json(
+        { error: 'Google service account is not configured.' },
+        { status: 503 }
+      );
+    }
+    if (err instanceof TasksStorageError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
+
+  const tabName = `Calendar ${year}`;
   const rows = buildYearGrid(year, byDate);
 
   try {
@@ -164,13 +153,13 @@ export async function POST(req: NextRequest) {
       (err as { status?: number })?.status;
     if (code === 404) {
       return NextResponse.json(
-        { error: 'Export sheet not found. Check CALENDAR_EXPORT_SHEET_ID.' },
+        { error: 'Export spreadsheet not found. Check CALENDAR_EXPORT_SHEET_ID (if set) or the Workflow spreadsheet.' },
         { status: 404 }
       );
     }
     if (code === 403) {
       return NextResponse.json(
-        { error: `No access to the export sheet. Share it (Editor) with ${serviceAccountEmail()}.` },
+        { error: `No access to the spreadsheet. Share it (Editor) with ${serviceAccountEmail()}.` },
         { status: 403 }
       );
     }
