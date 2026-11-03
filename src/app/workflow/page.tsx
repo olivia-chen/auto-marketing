@@ -1413,15 +1413,20 @@ function TaskDetailDialog({
                 ))
               )}
             </div>
-            <div className="flex gap-2">
-              <Input
+            <div className="flex items-end gap-2">
+              <Textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
-                placeholder="Add a comment…"
-                className="h-9"
+                placeholder="Add a comment…  (Enter to send, Shift+Enter for a new line)"
+                rows={3}
+                className="min-h-[72px] max-h-48 text-sm leading-relaxed resize-y"
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && comment.trim() && !busy) {
-                    patch({ addComment: comment }, true);
+                  // Enter sends; Shift+Enter inserts a newline.
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (comment.trim() && !busy) {
+                      patch({ addComment: comment }, true);
+                    }
                   }
                 }}
               />
