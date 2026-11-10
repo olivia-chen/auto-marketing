@@ -38,6 +38,7 @@ import {
 import { Activity, CampaignType, CAMPAIGN_TYPES } from '@/lib/types';
 import { v4 as uuidv4 } from 'uuid';
 import CampaignCalendar from '@/components/CampaignCalendar';
+import { withRecurringPlaceholders } from '@/lib/recurring-placeholders';
 import { format, parseISO, addDays } from 'date-fns';
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -486,7 +487,12 @@ export default function Home() {
   const exportCalendarYear = async () => {
     const year = new Date().getFullYear();
     type ExportEntry = { date: string; title: string; time?: string; source?: string };
-    const entries = displayedActivities
+    // Include recurring placeholders (e.g. 3rd-Friday Parent Coffee Meet) for the whole year.
+    const entries = withRecurringPlaceholders(
+      displayedActivities,
+      new Date(year, 0, 1),
+      new Date(year, 11, 31)
+    )
       .map((a): ExportEntry | null => {
         let raw: unknown = a.startDate;
         if (raw && typeof raw === 'object') {
@@ -943,8 +949,12 @@ export default function Home() {
           <TabsContent value="schedule" className="mt-6 space-y-4">
             <CampaignCalendar
               activities={displayedActivities}
-              onAddEntry={(dateISO) => {
+              onAddEntry={(dateISO, preset) => {
                 setManualDate(dateISO);
+                if (preset) {
+                  setManualTitle(preset.title);
+                  setManualType(preset.type);
+                }
                 setShowAddDialog(true);
               }}
               onSelectActivity={openEditor}
