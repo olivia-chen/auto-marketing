@@ -31,6 +31,10 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import type { Activity } from '@/lib/types';
+import {
+  withRecurringPlaceholders,
+  isRecurringPlaceholder,
+} from '@/lib/recurring-placeholders';
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -52,6 +56,15 @@ const SOURCE_STYLE: Record<string, string> = {
   manual: 'bg-amber-100 text-amber-800 hover:bg-amber-200',
 };
 
+/** Recurring placeholders (e.g. 3rd-Friday Parent Coffee Meet) look tentative. */
+const PLACEHOLDER_STYLE =
+  'bg-rose-50 text-rose-700 border border-dashed border-rose-300 hover:bg-rose-100';
+
+function styleFor(a: Activity): string {
+  if (isRecurringPlaceholder(a)) return PLACEHOLDER_STYLE;
+  return SOURCE_STYLE[a.source] || SOURCE_STYLE.manual;
+}
+
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 // ─── Component ────────────────────────────────────────────────────
@@ -64,7 +77,7 @@ export default function CampaignCalendar({
   exporting = false,
 }: {
   activities: Activity[];
-  onAddEntry?: (dateISO: string) => void;
+  onAddEntry?: (dateISO: string, preset?: { title: string; type: Activity['type'] }) => void;
   onSelectActivity?: (activity: Activity) => void;
   onExport?: () => void;
   exporting?: boolean;
@@ -73,10 +86,21 @@ export default function CampaignCalendar({
   // Day-detail popup (opened via "+N more" or clicking a day)
   const [openDayKey, setOpenDayKey] = useState<string | null>(null);
 
-  // Bucket activities by yyyy-MM-dd
+  const weeks = useMemo(() => {
+    const gridStart = startOfWeek(startOfMonth(viewDate), { weekStartsOn: 1 });
+    const gridEnd = endOfWeek(endOfMonth(viewDate), { weekStartsOn: 1 });
+    const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
+    const rows: Date[][] = [];
+    for (let i = 0; i < days.length; i += 7) rows.push(days.slice(i, i + 7));
+    return rows;
+  }, [viewDate]);
+
+  // Bucket activities (plus recurring placeholders for the visible grid) by yyyy-MM-dd
   const byDay = useMemo(() => {
     const map = new Map<string, Activity[]>();
-    for (const a of activities) {
+    const gridStart = weeks[0][0];
+    const gridEnd = weeks[weeks.length - 1][6];
+    for (const a of withRecurringPlaceholders(activities, gridStart, gridEnd)) {
       const d = toDate(a.startDate);
       if (!d) continue;
       const key = format(d, 'yyyy-MM-dd');
@@ -93,16 +117,7 @@ export default function CampaignCalendar({
       });
     }
     return map;
-  }, [activities]);
-
-  const weeks = useMemo(() => {
-    const gridStart = startOfWeek(startOfMonth(viewDate), { weekStartsOn: 1 });
-    const gridEnd = endOfWeek(endOfMonth(viewDate), { weekStartsOn: 1 });
-    const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
-    const rows: Date[][] = [];
-    for (let i = 0; i < days.length; i += 7) rows.push(days.slice(i, i + 7));
-    return rows;
-  }, [viewDate]);
+  }, [activities, weeks]);
 
   const monthEntryCount = useMemo(() => {
     let n = 0;
@@ -112,6 +127,20 @@ export default function CampaignCalendar({
     }
     return n;
   }, [byDay, viewDate]);
+
+  // Placeholders aren't stored, so clicking one starts a real entry for that
+  // day (prefilled); every other item opens the normal editor.
+  function handleSelect(a: Activity) {
+    if (isRecurringPlaceholder(a)) {
+      const day = a.startDate.slice(0, 10);
+      onAddEntry?.(day, {
+        title: a.title.replace(/\s*\(placeholder\)\s*$/i, ''),
+        type: a.type,
+      });
+      return;
+    }
+    onSelectActivity?.(a);
+  }
 
   function timeLabel(a: Activity): string {
     const d = toDate(a.startDate);
@@ -237,12 +266,12 @@ export default function CampaignCalendar({
                     <div className="flex flex-col gap-0.5">
                       {entries.slice(0, 4).map((a) => {
                         const t = timeLabel(a);
-                        const style = SOURCE_STYLE[a.source] || SOURCE_STYLE.manual;
+                        const style = styleFor(a);
                         return (
                           <button
                             key={a.id}
                             type="button"
-                            onClick={() => onSelectActivity?.(a)}
+                            onClick={() => handleSelect(a)}
                             className={`text-left text-[10px] leading-tight rounded px-1 py-0.5 truncate block w-full ${style} ${
                               onSelectActivity ? 'cursor-pointer' : ''
                             }`}
@@ -295,6 +324,10 @@ export default function CampaignCalendar({
         <span className="flex items-center gap-1">
           <span className="h-2.5 w-2.5 rounded-sm bg-amber-200" /> Manual entry
         </span>
+        <span className="flex items-center gap-1">
+          <span className="h-2.5 w-2.5 rounded-sm bg-rose-50 border border-dashed border-rose-300" />{' '}
+          Recurring placeholder
+        </span>
       </div>
 
       {/* Day-detail popup (all entries for a day) */}
@@ -312,14 +345,14 @@ export default function CampaignCalendar({
             {openDayKey &&
               (byDay.get(openDayKey) || []).map((a) => {
                 const t = timeLabel(a);
-                const style = SOURCE_STYLE[a.source] || SOURCE_STYLE.manual;
+                const style = styleFor(a);
                 return (
                   <button
                     key={a.id}
                     type="button"
                     onClick={() => {
                       setOpenDayKey(null);
-                      onSelectActivity?.(a);
+                      handleSelect(a);
                     }}
                     className={`w-full text-left rounded-lg px-3 py-2 text-xs transition-colors ${style} hover:brightness-95`}
                   >
