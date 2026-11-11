@@ -39,6 +39,11 @@ export interface MonthlyRecurrenceRule {
   startsOn?: string;
   /** Last day the rule applies, "yyyy-MM-dd" (inclusive). Omit to repeat indefinitely. */
   endsOn?: string;
+  /**
+   * One-off date changes: maps the date the rule would produce ("yyyy-MM-dd")
+   * to the date it actually happens that month (like an RRULE + EXDATE/RDATE).
+   */
+  moved?: Record<string, string>;
   /** Equivalent iCalendar RRULE, for reference / future .ics export. */
   rrule: string;
 }
@@ -54,6 +59,8 @@ export const RECURRING_PLACEHOLDERS: MonthlyRecurrenceRule[] = [
     notes: 'Recurring placeholder: Parent Coffee Meet happens on the 3rd Friday of every month in 2027.',
     startsOn: '2027-01-01',
     endsOn: '2027-12-31',
+    // January 2027 meet is on the 4th Friday instead of the 3rd.
+    moved: { '2027-01-15': '2027-01-22' },
     rrule: 'DTSTART=20270101;FREQ=MONTHLY;BYDAY=FR;BYSETPOS=3;UNTIL=20271231',
   },
 ];
@@ -83,10 +90,11 @@ export function expandRecurringPlaceholders(
     for (const rule of rules) {
       const day = nthWeekdayOfMonth(m, rule.weekday, rule.nth);
       if (!day) continue;
-      const dayKey = format(day, 'yyyy-MM-dd');
+      const ruleKey = format(day, 'yyyy-MM-dd');
+      const dayKey = rule.moved?.[ruleKey] ?? ruleKey;
       if (dayKey < fromKey || dayKey > toKey) continue;
-      if (rule.startsOn && dayKey < rule.startsOn) continue;
-      if (rule.endsOn && dayKey > rule.endsOn) continue;
+      if (rule.startsOn && ruleKey < rule.startsOn) continue;
+      if (rule.endsOn && ruleKey > rule.endsOn) continue;
       out.push({
         id: `recurring:${rule.key}:${dayKey}`,
         title: rule.title,
